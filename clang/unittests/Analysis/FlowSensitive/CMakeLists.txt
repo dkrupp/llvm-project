@@ -13,6 +13,7 @@ add_clang_unittest(ClangAnalysisFlowSensitiveTests
   MatchSwitchTest.cpp
   MultiVarConstantPropagationTest.cpp
   SingleVarConstantPropagationTest.cpp
+  TaintPropagationTest.cpp
   TestingSupport.cpp
   TestingSupportTest.cpp
   TransferTest.cpp
