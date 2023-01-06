@@ -5,7 +5,7 @@ int atoi(const char *nptr);
 
 void f(void) {
   char s[80];
-  scanf("%s", s);
+  scanf("%s", s); 
   int d = atoi(s); // expected-warning {{tainted}}
 }
 

@@ -6,7 +6,7 @@ void clang_analyzer_printState(void);
 int getchar(void);
 
 // CHECK: Tainted symbols:
-// CHECK-NEXT: conj_$2{{.*}} : 0
+// CHECK-NEXT: conj_$2{{.*}} : Type:0 Flow:0
 int test_taint_dumps(void) {
   int x = getchar();
   clang_analyzer_printState();

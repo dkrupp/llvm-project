@@ -44,7 +44,7 @@
                     {
                       "importance": "essential",
                       "location": {
-                        "message": {
+                        "message": {         
                           "text": "tainted"
                         },
                         "physicalLocation": {

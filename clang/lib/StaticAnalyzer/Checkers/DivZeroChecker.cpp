@@ -25,8 +25,9 @@ using namespace taint;
 
 namespace {
 class DivZeroChecker : public Checker< check::PreStmt<BinaryOperator> > {
-  mutable std::unique_ptr<BuiltinBug> BT;
-  void reportBug(const char *Msg, ProgramStateRef StateZero, CheckerContext &C,
+  mutable std::unique_ptr<BugType> BT;
+  void reportBug(const char *Msg, std::string Category,
+                 ProgramStateRef StateZero, CheckerContext &C,
                  std::unique_ptr<BugReporterVisitor> Visitor = nullptr) const;
 
 public:
@@ -42,13 +43,19 @@ static const Expr *getDenomExpr(const ExplodedNode *N) {
 }
 
 void DivZeroChecker::reportBug(
-    const char *Msg, ProgramStateRef StateZero, CheckerContext &C,
-    std::unique_ptr<BugReporterVisitor> Visitor) const {
+    const char *Msg, std::string Category, ProgramStateRef StateZero,
+    CheckerContext &C, std::unique_ptr<BugReporterVisitor> Visitor) const {
   if (ExplodedNode *N = C.generateErrorNode(StateZero)) {
     if (!BT)
-      BT.reset(new BuiltinBug(this, "Division by zero"));
+      BT.reset(new BugType(this, "Division by zero", Category));
 
-    auto R = std::make_unique<PathSensitiveBugReport>(*BT, Msg, N);
+    std::optional<TaintData> TD = std::nullopt;
+    if (Category == categories::TaintedData)
+      TD = getTaintDataPointeeOrPointer(C, C.getSVal(getDenomExpr(N)));
+
+    auto R = TD ? std::make_unique<TaintBugReport>(*BT, Msg, N, *TD)
+                : std::make_unique<PathSensitiveBugReport>(*BT, Msg, N);
+    std::make_unique<PathSensitiveBugReport>(*BT, Msg, N);
     R->addVisitor(std::move(Visitor));
     bugreporter::trackExpressionValue(N, getDenomExpr(N), *R);
     C.emitReport(std::move(R));
@@ -82,14 +89,14 @@ void DivZeroChecker::checkPreStmt(const BinaryOperator *B,
 
   if (!stateNotZero) {
     assert(stateZero);
-    reportBug("Division by zero", stateZero, C);
+    reportBug("Division by zero", categories::LogicError, stateZero, C);
     return;
   }
 
   bool TaintedD = isTainted(C.getState(), *DV);
   if ((stateNotZero && stateZero && TaintedD)) {
-    reportBug("Division by a tainted value, possibly zero", stateZero, C,
-              std::make_unique<taint::TaintBugVisitor>(*DV));
+    reportBug("Division by a tainted value, possibly zero",
+              categories::TaintedData, stateZero, C);
     return;
   }
 

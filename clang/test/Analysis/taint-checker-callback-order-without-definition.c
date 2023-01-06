@@ -13,19 +13,22 @@ char *fgets(char *s, int n, FILE *fp); // no-definition
 
 void top(const char *fname, char *buf) {
   FILE *fp = fopen(fname, "r"); // Introduce taint.
-  // CHECK:      PreCall<fopen(fname, "r")> prepares tainting arg index: -1
-  // CHECK-NEXT: PostCall<fopen(fname, "r")> actually wants to taint arg index: -1
+  // CHECK:      New taint flow. Flow id: 0
+  // CHECK-NEXT: PreCall<fopen(fname, "r")> prepares tainting arg index: -1 Flow Id: 0
+  // CHECK-NEXT: PostCall<fopen(fname, "r")> actually wants to taint arg index: -1 Flow Id: 0
 
   if (!fp)
     return;
 
   (void)fgets(buf, 42, fp); // Trigger taint propagation.
 
-  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: -1
-  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: 0
-  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: 2
+  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: -1 Flow Id: 0
+  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: 0 Flow Id: 0
+  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: 0 Flow Id: 0
   //
-  // CHECK-NEXT: PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: -1
-  // CHECK-NEXT: PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: 0
-  // CHECK-NEXT: PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: 2
+  // CHECK-NEXT: PreCall<fgets(buf, 42, fp)> prepares tainting arg index: 2 Flow Id: 0
+  // CHECK-NEXT: PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: -1 Flow Id: 0
+  // CHECK-NEXT: PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: 0 Flow Id: 0
+  // PostCall<fgets(buf, 42, fp)> actually wants to taint arg index: 2 Flow Id: 0
+
 }

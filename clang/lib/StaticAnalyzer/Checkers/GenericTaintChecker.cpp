@@ -25,7 +25,9 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallDescription.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/ExplodedGraph.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+
 #include "llvm/Support/YAMLTraits.h"
 
 #include <limits>
@@ -71,6 +73,25 @@ constexpr llvm::StringLiteral MsgCustomSink =
 using ArgIdxTy = int;
 using ArgVecTy = llvm::SmallVector<ArgIdxTy, 2>;
 
+/// In this structure we follow the spread of the taint flows through
+/// the function arguments.
+struct ArgIdxFlowTy {
+  ArgIdxTy ArgIdx;
+  int FlowId;
+  ArgIdxFlowTy(ArgIdxTy i) : ArgIdx(i), FlowId(UninitializedFlow){};
+  ArgIdxFlowTy(ArgIdxTy i, int f) : ArgIdx(i), FlowId(f){};
+  bool operator==(const ArgIdxFlowTy &X) const {
+    return FlowId == X.FlowId && ArgIdx == X.ArgIdx;
+  }
+  int operator<(const ArgIdxFlowTy &X) const {
+    return FlowId < X.FlowId && ArgIdx < X.ArgIdx;
+  }
+  void Profile(llvm::FoldingSetNodeID &ID) const {
+    ID.AddInteger(FlowId);
+    ID.AddInteger(ArgIdx);
+  }
+};
+
 /// Denotes the return value.
 constexpr ArgIdxTy ReturnValueIndex{-1};
 
@@ -79,56 +100,6 @@ static ArgIdxTy fromArgumentCount(unsigned Count) {
              static_cast<std::size_t>(std::numeric_limits<ArgIdxTy>::max()) &&
          "ArgIdxTy is not large enough to represent the number of arguments.");
   return Count;
-}
-
-/// Check if the region the expression evaluates to is the standard input,
-/// and thus, is tainted.
-/// FIXME: Move this to Taint.cpp.
-bool isStdin(SVal Val, const ASTContext &ACtx) {
-  // FIXME: What if Val is NonParamVarRegion?
-
-  // The region should be symbolic, we do not know it's value.
-  const auto *SymReg = dyn_cast_or_null<SymbolicRegion>(Val.getAsRegion());
-  if (!SymReg)
-    return false;
-
-  // Get it's symbol and find the declaration region it's pointing to.
-  const auto *DeclReg =
-      dyn_cast_or_null<DeclRegion>(SymReg->getSymbol()->getOriginRegion());
-  if (!DeclReg)
-    return false;
-
-  // This region corresponds to a declaration, find out if it's a global/extern
-  // variable named stdin with the proper type.
-  if (const auto *D = dyn_cast_or_null<VarDecl>(DeclReg->getDecl())) {
-    D = D->getCanonicalDecl();
-    // FIXME: This should look for an exact match.
-    if (D->getName().contains("stdin") && D->isExternC()) {
-      const QualType FILETy = ACtx.getFILEType().getCanonicalType();
-      const QualType Ty = D->getType().getCanonicalType();
-
-      if (Ty->isPointerType())
-        return Ty->getPointeeType() == FILETy;
-    }
-  }
-  return false;
-}
-
-SVal getPointeeOf(const CheckerContext &C, Loc LValue) {
-  const QualType ArgTy = LValue.getType(C.getASTContext());
-  if (!ArgTy->isPointerType() || !ArgTy->getPointeeType()->isVoidType())
-    return C.getState()->getSVal(LValue);
-
-  // Do not dereference void pointers. Treat them as byte pointers instead.
-  // FIXME: we might want to consider more than just the first byte.
-  return C.getState()->getSVal(LValue, C.getASTContext().CharTy);
-}
-
-/// Given a pointer/reference argument, return the value it refers to.
-std::optional<SVal> getPointeeOf(const CheckerContext &C, SVal Arg) {
-  if (auto LValue = Arg.getAs<Loc>())
-    return getPointeeOf(C, *LValue);
-  return std::nullopt;
 }
 
 /// Given a pointer, return the SVal of its pointee or if it is tainted,
@@ -182,6 +153,27 @@ private:
   std::optional<ArgIdxTy> VariadicIndex;
 };
 
+const NoteTag *createTaintOriginTag(CheckerContext &C, int FlowId) {
+  LLVM_DEBUG(llvm::dbgs() << "New taint flow. Flow id: " << FlowId << '\n';);
+  const NoteTag *InjectionTag =
+      C.getNoteTag([&C, FlowId](PathSensitiveBugReport &BR) -> std::string {
+        SmallString<256> Msg;
+        llvm::raw_svector_ostream Out(Msg);
+        // Only make this note when the report is taint related and the flow
+        // id of the origin matches with the flow id of the sink.
+        // We are not using "interestingess" for this as it is not
+        // propagating the same way as taintedness property.
+        if (TaintBugReport *TBR = dyn_cast_or_null<TaintBugReport>(&BR))
+          if (TBR->taint_data.Flow == FlowId) {
+            LLVM_DEBUG(llvm::dbgs() << "Taint originated here. Flow id: "
+                                    << std::to_string(FlowId) << "\n");
+            Out << "Taint originated here";
+          }
+        return std::string(Out.str());
+      });
+  return InjectionTag;
+}
+
 /// A struct used to specify taint propagation rules for a function.
 ///
 /// If any of the possible taint source arguments is tainted, all of the
@@ -193,7 +185,7 @@ class GenericTaintRule {
   ArgSet SinkArgs;
   /// Arguments which should be sanitized on function return.
   ArgSet FilterArgs;
-  /// Arguments which can participate in taint propagationa. If any of the
+  /// Arguments which can participate in taint propagation. If any of the
   /// arguments in PropSrcArgs is tainted, all arguments in  PropDstArgs should
   /// be tainted.
   ArgSet PropSrcArgs;
@@ -334,7 +326,6 @@ class GenericTaintChecker : public Checker<check::PreCall, check::PostCall> {
 public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
-
   void printState(raw_ostream &Out, ProgramStateRef State, const char *NL,
                   const char *Sep) const override;
 
@@ -342,8 +333,13 @@ public:
   bool generateReportIfTainted(const Expr *E, StringRef Msg,
                                CheckerContext &C) const;
 
+  static TaintFlowType generateNewTaintFlow() { return FlowIdCount++; }
+
 private:
-  const BugType BT{this, "Use of Untrusted Data", "Untrusted Data"};
+  /// A unique counter for each taint flow.
+  /// We must increase this whenever the analysis hits a new taint source.
+  static TaintFlowType FlowIdCount;
+  const BugType BT{this, "Use of Untrusted Data", categories::TaintedData};
 
   bool checkUncontrolledFormatString(const CallEvent &Call,
                                      CheckerContext &C) const;
@@ -365,6 +361,8 @@ private:
   mutable std::optional<RuleLookupTy> StaticTaintRules;
   mutable std::optional<RuleLookupTy> DynamicTaintRules;
 };
+TaintFlowType GenericTaintChecker::FlowIdCount = 0;
+
 } // end of anonymous namespace
 
 /// YAML serialization mapping.
@@ -424,8 +422,8 @@ template <> struct ScalarEnumerationTraits<TaintConfiguration::VariadicType> {
 /// ReturnValueIndex, or indexes of the pointer/reference argument, which
 /// points to data, which should be tainted on return.
 REGISTER_MAP_WITH_PROGRAMSTATE(TaintArgsOnPostVisit, const LocationContext *,
-                               ImmutableSet<ArgIdxTy>)
-REGISTER_SET_FACTORY_WITH_PROGRAMSTATE(ArgIdxFactory, ArgIdxTy)
+                               ImmutableSet<ArgIdxFlowTy>)
+REGISTER_SET_FACTORY_WITH_PROGRAMSTATE(ArgIdxFactory, ArgIdxFlowTy)
 
 void GenericTaintRuleParser::validateArgVector(const std::string &Option,
                                                const ArgVecTy &Args) const {
@@ -776,29 +774,32 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   // stored in the state as TaintArgsOnPostVisit set.
   TaintArgsOnPostVisitTy TaintArgsMap = State->get<TaintArgsOnPostVisit>();
 
-  const ImmutableSet<ArgIdxTy> *TaintArgs = TaintArgsMap.lookup(CurrentFrame);
+  const ImmutableSet<ArgIdxFlowTy> *TaintArgs =
+      TaintArgsMap.lookup(CurrentFrame);
   if (!TaintArgs)
     return;
   assert(!TaintArgs->isEmpty());
 
-  LLVM_DEBUG(for (ArgIdxTy I
+  LLVM_DEBUG(for (ArgIdxFlowTy I
                   : *TaintArgs) {
     llvm::dbgs() << "PostCall<";
     Call.dump(llvm::dbgs());
-    llvm::dbgs() << "> actually wants to taint arg index: " << I << '\n';
+    llvm::dbgs() << "> actually wants to taint arg index: " << I.ArgIdx
+                 << " Flow Id: " << I.FlowId << "\n";
   });
 
-  for (ArgIdxTy ArgNum : *TaintArgs) {
+  for (ArgIdxFlowTy ArgNum : *TaintArgs) {
     // Special handling for the tainted return value.
-    if (ArgNum == ReturnValueIndex) {
-      State = addTaint(State, Call.getReturnValue());
+    if (ArgNum.ArgIdx == ReturnValueIndex) {
+      State = addTaint(State, Call.getReturnValue(), ArgNum.FlowId);
       continue;
     }
 
     // The arguments are pointer arguments. The data they are pointing at is
     // tainted after the call.
-    if (auto V = getPointeeOf(C, Call.getArgSVal(ArgNum)))
-      State = addTaint(State, *V);
+    if (auto V = getPointeeOf(C, Call.getArgSVal(ArgNum.ArgIdx))) {
+      State = addTaint(State, *V, ArgNum.FlowId);
+    }
   }
 
   // Clear up the taint info from the state.
@@ -826,8 +827,13 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
 
   /// Check for taint sinks.
   ForEachCallArg([this, &Checker, &C, &State](ArgIdxTy I, const Expr *E, SVal) {
-    if (SinkArgs.contains(I) && isTaintedOrPointsToTainted(E, State, C))
+    if (SinkArgs.contains(I) && isTaintedOrPointsToTainted(E, State, C)) {
+      LLVM_DEBUG(llvm::dbgs()
+                     << "Potential Injection vulnerability detected. Flow id: "
+                     << getTaintDataPointeeOrPointer(C, C.getSVal(E))->Flow
+                     << '\n';);
       Checker.generateReportIfTainted(E, SinkMsg.value_or(MsgCustomSink), C);
+    }
   });
 
   /// Check for taint filters.
@@ -843,11 +849,31 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
   /// A rule is relevant if PropSrcArgs is empty, or if any of its signified
   /// args are tainted in context of the current CallEvent.
   bool IsMatching = PropSrcArgs.isEmpty();
-  ForEachCallArg(
-      [this, &C, &IsMatching, &State](ArgIdxTy I, const Expr *E, SVal) {
-        IsMatching = IsMatching || (PropSrcArgs.contains(I) &&
-                                    isTaintedOrPointsToTainted(E, State, C));
-      });
+  TaintFlowType TaintFlowId = UninitializedFlow;
+
+  const NoteTag *InjectionTag = nullptr;
+  if (PropSrcArgs.isEmpty() && !PropDstArgs.isEmpty()) {
+    // The attacker injects the taint value here
+    // We place here a noteTag and assign a new Flow id.
+    TaintFlowId = GenericTaintChecker::generateNewTaintFlow();
+    InjectionTag = createTaintOriginTag(C, TaintFlowId);
+  }
+
+  ForEachCallArg([this, &C, &IsMatching, &State, &TaintFlowId,
+                  &InjectionTag](ArgIdxTy I, const Expr *E, SVal) mutable {
+    IsMatching = IsMatching || (PropSrcArgs.contains(I) &&
+                                isTaintedOrPointsToTainted(E, State, C));
+    if (TaintFlowId == UninitializedFlow) {
+      if (isStdin(C.getSVal(E), C.getASTContext())) {
+        // Reading from stdin. Creating a new flow
+        TaintFlowId = GenericTaintChecker::generateNewTaintFlow();
+        InjectionTag = createTaintOriginTag(C, TaintFlowId);
+      } else if (getTaintDataPointeeOrPointer(C, C.getSVal(E)).has_value()) {
+        // Propagating an existing Flow Id
+        TaintFlowId = getTaintDataPointeeOrPointer(C, C.getSVal(E))->Flow;
+      }
+    }
+  });
 
   if (!IsMatching)
     return;
@@ -865,32 +891,34 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
 
   /// Propagate taint where it is necessary.
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
-  ImmutableSet<ArgIdxTy> Result = F.getEmptySet();
-  ForEachCallArg(
-      [&](ArgIdxTy I, const Expr *E, SVal V) {
-        if (PropDstArgs.contains(I)) {
-          LLVM_DEBUG(llvm::dbgs() << "PreCall<"; Call.dump(llvm::dbgs());
-                     llvm::dbgs()
-                     << "> prepares tainting arg index: " << I << '\n';);
-          Result = F.add(Result, I);
-        }
+  ImmutableSet<ArgIdxFlowTy> Result = F.getEmptySet();
+  ForEachCallArg([&](ArgIdxTy I, const Expr *E, SVal V) {
+    if (PropDstArgs.contains(I)) {
+      LLVM_DEBUG(llvm::dbgs() << "PreCall<"; Call.dump(llvm::dbgs());
+                 llvm::dbgs() << "> prepares tainting arg index: " << I
+                              << " Flow Id: " << TaintFlowId << '\n';);
+      ArgIdxFlowTy Flow(I, TaintFlowId);
+      Result = F.add(Result, Flow);
+    }
 
-        // TODO: We should traverse all reachable memory regions via the
-        // escaping parameter. Instead of doing that we simply mark only the
-        // referred memory region as tainted.
-        if (WouldEscape(V, E->getType())) {
-          LLVM_DEBUG(if (!Result.contains(I)) {
-            llvm::dbgs() << "PreCall<";
-            Call.dump(llvm::dbgs());
-            llvm::dbgs() << "> prepares tainting arg index: " << I << '\n';
-          });
-          Result = F.add(Result, I);
-        }
+    // TODO: We should traverse all reachable memory regions via the
+    // escaping parameter. Instead of doing that we simply mark only the
+    // referred memory region as tainted.
+    if (WouldEscape(V, E->getType())) {
+      LLVM_DEBUG(if (!Result.contains(I)) {
+        llvm::dbgs() << "PreCall<";
+        Call.dump(llvm::dbgs());
+        llvm::dbgs() << "> prepares tainting arg index: " << I
+                     << " Flow Id: " << TaintFlowId << '\n';
       });
+      ArgIdxFlowTy Flow(I, TaintFlowId);
+      Result = F.add(Result, Flow);
+    }
+  });
 
   if (!Result.isEmpty())
     State = State->set<TaintArgsOnPostVisit>(C.getStackFrame(), Result);
-  C.addTransition(State);
+  C.addTransition(State, InjectionTag);
 }
 
 bool GenericTaintRule::UntrustedEnv(CheckerContext &C) {
@@ -902,16 +930,14 @@ bool GenericTaintRule::UntrustedEnv(CheckerContext &C) {
 bool GenericTaintChecker::generateReportIfTainted(const Expr *E, StringRef Msg,
                                                   CheckerContext &C) const {
   assert(E);
-  std::optional<SVal> TaintedSVal{getTaintedPointeeOrPointer(C, C.getSVal(E))};
+  std::optional<TaintData> TD = getTaintDataPointeeOrPointer(C, C.getSVal(E));
 
-  if (!TaintedSVal)
+  if (!TD) {
     return false;
-
+  }
   // Generate diagnostic.
   if (ExplodedNode *N = C.generateNonFatalErrorNode()) {
-    auto report = std::make_unique<PathSensitiveBugReport>(BT, Msg, N);
-    report->addRange(E->getSourceRange());
-    report->addVisitor(std::make_unique<TaintBugVisitor>(*TaintedSVal));
+    auto report = std::make_unique<TaintBugReport>(BT, Msg, N, *TD);
     C.emitReport(std::move(report));
     return true;
   }
@@ -982,7 +1008,8 @@ void GenericTaintChecker::taintUnsafeSocketProtocol(const CallEvent &Call,
 
   ProgramStateRef State = C.getState();
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
-  ImmutableSet<ArgIdxTy> Result = F.add(F.getEmptySet(), ReturnValueIndex);
+  ImmutableSet<ArgIdxFlowTy> Result =
+      F.add(F.getEmptySet(), ArgIdxFlowTy(ReturnValueIndex));
   State = State->set<TaintArgsOnPostVisit>(C.getStackFrame(), Result);
   C.addTransition(State);
 }
