@@ -118,7 +118,7 @@ public:
 /// individual bug reports.
 class BugReport {
 public:
-  enum class Kind { Basic, PathSensitive };
+  enum class Kind { Basic, PathSensitive, TaintPathSensitive };
 
 protected:
   friend class BugReportEquivClass;
@@ -367,14 +367,16 @@ protected:
 
 public:
   PathSensitiveBugReport(const BugType &bt, StringRef desc,
-                         const ExplodedNode *errorNode)
-      : PathSensitiveBugReport(bt, desc, desc, errorNode) {}
+                         const ExplodedNode *errorNode,
+                         BugReport::Kind kind = Kind::PathSensitive)
+      : PathSensitiveBugReport(bt, desc, desc, errorNode, kind) {}
 
   PathSensitiveBugReport(const BugType &bt, StringRef shortDesc, StringRef desc,
-                         const ExplodedNode *errorNode)
+                         const ExplodedNode *errorNode,
+                         BugReport::Kind kind = Kind::PathSensitive)
       : PathSensitiveBugReport(bt, shortDesc, desc, errorNode,
                                /*LocationToUnique*/ {},
-                               /*DeclToUnique*/ nullptr) {}
+                               /*DeclToUnique*/ nullptr, kind) {}
 
   /// Create a PathSensitiveBugReport with a custom uniqueing location.
   ///
@@ -386,17 +388,20 @@ public:
   PathSensitiveBugReport(const BugType &bt, StringRef desc,
                          const ExplodedNode *errorNode,
                          PathDiagnosticLocation LocationToUnique,
-                         const Decl *DeclToUnique)
+                         const Decl *DeclToUnique,
+                         BugReport::Kind kind = Kind::PathSensitive)
       : PathSensitiveBugReport(bt, desc, desc, errorNode, LocationToUnique,
-                               DeclToUnique) {}
+                               DeclToUnique, kind) {}
 
   PathSensitiveBugReport(const BugType &bt, StringRef shortDesc, StringRef desc,
                          const ExplodedNode *errorNode,
                          PathDiagnosticLocation LocationToUnique,
-                         const Decl *DeclToUnique);
+                         const Decl *DeclToUnique,
+                         BugReport::Kind kind = Kind::PathSensitive);
 
   static bool classof(const BugReport *R) {
-    return R->getKind() == Kind::PathSensitive;
+    return R->getKind() >= Kind::PathSensitive &&
+           R->getKind() <= Kind::TaintPathSensitive;
   }
 
   const ExplodedNode *getErrorNode() const { return ErrorNode; }

@@ -167,8 +167,7 @@ ProgramStateRef VLASizeChecker::checkVLAIndexSize(CheckerContext &C,
 
   // Check if the size is tainted.
   if (isTainted(State, SizeV)) {
-    reportBug(VLA_Tainted, SizeE, nullptr, C,
-              std::make_unique<TaintBugVisitor>(SizeV));
+    reportBug(VLA_Tainted, SizeE, nullptr, C);
     return nullptr;
   }
 
@@ -217,9 +216,16 @@ void VLASizeChecker::reportBug(
   if (!N)
     return;
 
-  if (!BT)
-    BT.reset(new BuiltinBug(
-        this, "Dangerous variable-length array (VLA) declaration"));
+  if (!BT) {
+    if (Kind == VLA_Tainted)
+      BT.reset(new BugType(this,
+                           "Dangerous variable-length array (VLA) declaration",
+                           categories::TaintedData));
+    else
+      BT.reset(new BugType(this,
+                           "Dangerous variable-length array (VLA) declaration",
+                           categories::LogicError));
+  }
 
   SmallString<256> buf;
   llvm::raw_svector_ostream os(buf);
@@ -242,7 +248,12 @@ void VLASizeChecker::reportBug(
     break;
   }
 
-  auto report = std::make_unique<PathSensitiveBugReport>(*BT, os.str(), N);
+  std::optional<TaintData> TD = std::nullopt;
+  if (Kind == VLA_Tainted)
+    TD = getTaintDataPointeeOrPointer(C, C.getSVal(SizeE));
+
+  auto report = TD ? std::make_unique<TaintBugReport>(*BT, os.str(), N, *TD)
+                   : std::make_unique<PathSensitiveBugReport>(*BT, os.str(), N);
   report->addVisitor(std::move(Visitor));
   report->addRange(SizeE->getSourceRange());
   bugreporter::trackExpressionValue(N, SizeE, *report);

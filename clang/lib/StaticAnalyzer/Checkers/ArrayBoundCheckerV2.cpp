@@ -32,12 +32,12 @@ using namespace taint;
 namespace {
 class ArrayBoundCheckerV2 :
     public Checker<check::Location> {
-  mutable std::unique_ptr<BuiltinBug> BT;
+  mutable std::unique_ptr<BugType> BT;
 
   enum OOB_Kind { OOB_Precedes, OOB_Excedes, OOB_Tainted };
 
   void reportOOB(CheckerContext &C, ProgramStateRef errorState, OOB_Kind kind,
-                 std::unique_ptr<BugReporterVisitor> Visitor = nullptr) const;
+                 SVal &Offset) const;
 
 public:
   void checkLocation(SVal l, bool isLoad, const Stmt*S,
@@ -166,7 +166,8 @@ void ArrayBoundCheckerV2::checkLocation(SVal location, bool isLoad,
 
     // Are we constrained enough to definitely precede the lower bound?
     if (state_precedesLowerBound && !state_withinLowerBound) {
-      reportOOB(checkerContext, state_precedesLowerBound, OOB_Precedes);
+      reportOOB(checkerContext, state_precedesLowerBound, OOB_Precedes,
+                rawOffsetVal);
       return;
     }
 
@@ -208,14 +209,15 @@ void ArrayBoundCheckerV2::checkLocation(SVal location, bool isLoad,
       SVal ByteOffset = rawOffset.getByteOffset();
       if (isTainted(state, ByteOffset)) {
         reportOOB(checkerContext, state_exceedsUpperBound, OOB_Tainted,
-                  std::make_unique<TaintBugVisitor>(ByteOffset));
+                  rawOffsetVal);
         return;
       }
     } else if (state_exceedsUpperBound) {
       // If we are constrained enough to definitely exceed the upper bound,
       // report.
       assert(!state_withinUpperBound);
-      reportOOB(checkerContext, state_exceedsUpperBound, OOB_Excedes);
+      reportOOB(checkerContext, state_exceedsUpperBound, OOB_Excedes,
+                rawOffsetVal);
       return;
     }
 
@@ -227,16 +229,22 @@ void ArrayBoundCheckerV2::checkLocation(SVal location, bool isLoad,
   checkerContext.addTransition(state);
 }
 
-void ArrayBoundCheckerV2::reportOOB(
-    CheckerContext &checkerContext, ProgramStateRef errorState, OOB_Kind kind,
-    std::unique_ptr<BugReporterVisitor> Visitor) const {
+void ArrayBoundCheckerV2::reportOOB(CheckerContext &checkerContext,
+                                    ProgramStateRef errorState, OOB_Kind kind,
+                                    SVal &Offset) const {
 
   ExplodedNode *errorNode = checkerContext.generateErrorNode(errorState);
   if (!errorNode)
     return;
 
-  if (!BT)
-    BT.reset(new BuiltinBug(this, "Out-of-bound access"));
+  if (!BT) {
+    if (kind != OOB_Tainted)
+      BT.reset(
+          new BugType(this, "Out-of-bound access", categories::LogicError));
+    else
+      BT.reset(
+          new BugType(this, "Out-of-bound access", categories::TaintedData));
+  }
 
   // FIXME: This diagnostics are preliminary.  We should get far better
   // diagnostics for explaining buffer overruns.
@@ -255,9 +263,13 @@ void ArrayBoundCheckerV2::reportOOB(
     os << "(index is tainted)";
     break;
   }
+  std::optional<TaintData> TD = std::nullopt;
+  if (kind == OOB_Tainted)
+    TD = getTaintDataPointeeOrPointer(checkerContext, Offset);
 
-  auto BR = std::make_unique<PathSensitiveBugReport>(*BT, os.str(), errorNode);
-  BR->addVisitor(std::move(Visitor));
+  auto BR =
+      TD ? std::make_unique<TaintBugReport>(*BT, os.str(), errorNode, *TD)
+         : std::make_unique<PathSensitiveBugReport>(*BT, os.str(), errorNode);
   checkerContext.emitReport(std::move(BR));
 }
 
