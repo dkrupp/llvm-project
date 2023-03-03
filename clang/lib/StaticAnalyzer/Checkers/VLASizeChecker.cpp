@@ -55,8 +55,7 @@ class VLASizeChecker
                                     const Expr *SizeE) const;
 
   void reportBug(VLASize_Kind Kind, const Expr *SizeE, ProgramStateRef State,
-                 CheckerContext &C,
-                 std::unique_ptr<BugReporterVisitor> Visitor = nullptr) const;
+                 CheckerContext &C, SymbolRef TaintedSymbol = nullptr) const;
 
 public:
   void checkPreStmt(const DeclStmt *DS, CheckerContext &C) const;
@@ -166,9 +165,8 @@ ProgramStateRef VLASizeChecker::checkVLAIndexSize(CheckerContext &C,
     return nullptr;
 
   // Check if the size is tainted.
-  if (isTainted(State, SizeV)) {
-    reportBug(VLA_Tainted, SizeE, nullptr, C,
-              std::make_unique<TaintBugVisitor>(SizeV));
+  if (SymbolRef TSR = isTainted(State, SizeV)) {
+    reportBug(VLA_Tainted, SizeE, nullptr, C, TSR);
     return nullptr;
   }
 
@@ -209,17 +207,24 @@ ProgramStateRef VLASizeChecker::checkVLAIndexSize(CheckerContext &C,
   return State;
 }
 
-void VLASizeChecker::reportBug(
-    VLASize_Kind Kind, const Expr *SizeE, ProgramStateRef State,
-    CheckerContext &C, std::unique_ptr<BugReporterVisitor> Visitor) const {
+void VLASizeChecker::reportBug(VLASize_Kind Kind, const Expr *SizeE,
+                               ProgramStateRef State, CheckerContext &C,
+                               SymbolRef TaintedSymbol) const {
   // Generate an error node.
   ExplodedNode *N = C.generateErrorNode(State);
   if (!N)
     return;
 
-  if (!BT)
-    BT.reset(new BuiltinBug(
-        this, "Dangerous variable-length array (VLA) declaration"));
+  if (!BT) {
+    if (Kind == VLA_Tainted)
+      BT.reset(new BugType(this,
+                           "Dangerous variable-length array (VLA) declaration",
+                           categories::TaintedData));
+    else
+      BT.reset(new BugType(this,
+                           "Dangerous variable-length array (VLA) declaration",
+                           categories::LogicError));
+  }
 
   SmallString<256> buf;
   llvm::raw_svector_ostream os(buf);
@@ -243,9 +248,11 @@ void VLASizeChecker::reportBug(
   }
 
   auto report = std::make_unique<PathSensitiveBugReport>(*BT, os.str(), N);
-  report->addVisitor(std::move(Visitor));
   report->addRange(SizeE->getSourceRange());
   bugreporter::trackExpressionValue(N, SizeE, *report);
+  if (TaintedSymbol)
+    report->markInteresting(TaintedSymbol);
+
   C.emitReport(std::move(report));
 }
 

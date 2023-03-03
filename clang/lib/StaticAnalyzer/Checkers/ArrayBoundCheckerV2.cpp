@@ -32,12 +32,12 @@ using namespace taint;
 namespace {
 class ArrayBoundCheckerV2 :
     public Checker<check::Location> {
-  mutable std::unique_ptr<BuiltinBug> BT;
+  mutable std::unique_ptr<BugType> BT;
 
   enum OOB_Kind { OOB_Precedes, OOB_Excedes, OOB_Tainted };
 
   void reportOOB(CheckerContext &C, ProgramStateRef errorState, OOB_Kind kind,
-                 std::unique_ptr<BugReporterVisitor> Visitor = nullptr) const;
+                 SymbolRef TaintedSymbol = nullptr) const;
 
 public:
   void checkLocation(SVal l, bool isLoad, const Stmt*S,
@@ -206,9 +206,8 @@ void ArrayBoundCheckerV2::checkLocation(SVal location, bool isLoad,
     // If we are under constrained and the index variables are tainted, report.
     if (state_exceedsUpperBound && state_withinUpperBound) {
       SVal ByteOffset = rawOffset.getByteOffset();
-      if (isTainted(state, ByteOffset)) {
-        reportOOB(checkerContext, state_exceedsUpperBound, OOB_Tainted,
-                  std::make_unique<TaintBugVisitor>(ByteOffset));
+      if (SymbolRef TSR = isTainted(state, ByteOffset)) {
+        reportOOB(checkerContext, state_exceedsUpperBound, OOB_Tainted, TSR);
         return;
       }
     } else if (state_exceedsUpperBound) {
@@ -227,16 +226,16 @@ void ArrayBoundCheckerV2::checkLocation(SVal location, bool isLoad,
   checkerContext.addTransition(state);
 }
 
-void ArrayBoundCheckerV2::reportOOB(
-    CheckerContext &checkerContext, ProgramStateRef errorState, OOB_Kind kind,
-    std::unique_ptr<BugReporterVisitor> Visitor) const {
+void ArrayBoundCheckerV2::reportOOB(CheckerContext &checkerContext,
+                                    ProgramStateRef errorState, OOB_Kind kind,
+                                    SymbolRef TaintedSymbol) const {
 
   ExplodedNode *errorNode = checkerContext.generateErrorNode(errorState);
   if (!errorNode)
     return;
-
-  if (!BT)
-    BT.reset(new BuiltinBug(this, "Out-of-bound access"));
+  BT.reset(new BugType(this, "Out-of-bound access",
+                       kind == OOB_Tainted ? categories::TaintedData
+                                           : categories::LogicError));
 
   // FIXME: This diagnostics are preliminary.  We should get far better
   // diagnostics for explaining buffer overruns.
@@ -257,7 +256,9 @@ void ArrayBoundCheckerV2::reportOOB(
   }
 
   auto BR = std::make_unique<PathSensitiveBugReport>(*BT, os.str(), errorNode);
-  BR->addVisitor(std::move(Visitor));
+  if (TaintedSymbol)
+    BR->markInteresting(TaintedSymbol);
+
   checkerContext.emitReport(std::move(BR));
 }
 

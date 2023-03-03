@@ -25,9 +25,9 @@ using namespace taint;
 
 namespace {
 class DivZeroChecker : public Checker< check::PreStmt<BinaryOperator> > {
-  mutable std::unique_ptr<BuiltinBug> BT;
-  void reportBug(const char *Msg, ProgramStateRef StateZero, CheckerContext &C,
-                 std::unique_ptr<BugReporterVisitor> Visitor = nullptr) const;
+  mutable std::unique_ptr<BugType> BT;
+  void reportBug(StringRef Msg, StringRef Category, ProgramStateRef StateZero,
+                 CheckerContext &C, SymbolRef TaintedSymbol = nullptr) const;
 
 public:
   void checkPreStmt(const BinaryOperator *B, CheckerContext &C) const;
@@ -41,16 +41,17 @@ static const Expr *getDenomExpr(const ExplodedNode *N) {
   return nullptr;
 }
 
-void DivZeroChecker::reportBug(
-    const char *Msg, ProgramStateRef StateZero, CheckerContext &C,
-    std::unique_ptr<BugReporterVisitor> Visitor) const {
+void DivZeroChecker::reportBug(StringRef Msg, StringRef Category,
+                               ProgramStateRef StateZero, CheckerContext &C,
+                               SymbolRef TaintedSymbol) const {
   if (ExplodedNode *N = C.generateErrorNode(StateZero)) {
     if (!BT)
-      BT.reset(new BuiltinBug(this, "Division by zero"));
+      BT.reset(new BugType(this, "Division by zero", Category));
 
     auto R = std::make_unique<PathSensitiveBugReport>(*BT, Msg, N);
-    R->addVisitor(std::move(Visitor));
     bugreporter::trackExpressionValue(N, getDenomExpr(N), *R);
+    if (TaintedSymbol)
+      R->markInteresting(TaintedSymbol);
     C.emitReport(std::move(R));
   }
 }
@@ -82,15 +83,16 @@ void DivZeroChecker::checkPreStmt(const BinaryOperator *B,
 
   if (!stateNotZero) {
     assert(stateZero);
-    reportBug("Division by zero", stateZero, C);
+    reportBug("Division by zero", categories::LogicError, stateZero, C);
     return;
   }
 
-  bool TaintedD = isTainted(C.getState(), *DV);
-  if ((stateNotZero && stateZero && TaintedD)) {
-    reportBug("Division by a tainted value, possibly zero", stateZero, C,
-              std::make_unique<taint::TaintBugVisitor>(*DV));
-    return;
+  if ((stateNotZero && stateZero)) {
+    if (SymbolRef TaintedSym = isTainted(C.getState(), *DV)) {
+      reportBug("Division by a tainted value, possibly zero",
+                categories::TaintedData, stateZero, C, TaintedSym);
+      return;
+    }
   }
 
   // If we get here, then the denom should not be zero. We abandon the implicit

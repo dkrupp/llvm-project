@@ -62,43 +62,27 @@ addPartialTaint(ProgramStateRef State, SymbolRef ParentSym,
                 TaintTagType Kind = TaintTagGeneric);
 
 /// Check if the statement has a tainted value in the given state.
-bool isTainted(ProgramStateRef State, const Stmt *S,
-               const LocationContext *LCtx,
-               TaintTagType Kind = TaintTagGeneric);
+SymbolRef isTainted(ProgramStateRef State, const Stmt *S,
+                    const LocationContext *LCtx,
+                    TaintTagType Kind = TaintTagGeneric);
 
 /// Check if the value is tainted in the given state.
-bool isTainted(ProgramStateRef State, SVal V,
-               TaintTagType Kind = TaintTagGeneric);
+SymbolRef isTainted(ProgramStateRef State, SVal V,
+                    TaintTagType Kind = TaintTagGeneric);
 
 /// Check if the symbol is tainted in the given state.
-bool isTainted(ProgramStateRef State, SymbolRef Sym,
-               TaintTagType Kind = TaintTagGeneric);
+SymbolRef isTainted(ProgramStateRef State, SymbolRef Sym,
+                    TaintTagType Kind = TaintTagGeneric);
 
 /// Check if the pointer represented by the region is tainted in the given
 /// state.
-bool isTainted(ProgramStateRef State, const MemRegion *Reg,
-               TaintTagType Kind = TaintTagGeneric);
+SymbolRef isTainted(ProgramStateRef State, const MemRegion *Reg,
+                    TaintTagType Kind = TaintTagGeneric);
 
 void printTaint(ProgramStateRef State, raw_ostream &Out, const char *nl = "\n",
                 const char *sep = "");
 
 LLVM_DUMP_METHOD void dumpTaint(ProgramStateRef State);
-
-/// The bug visitor prints a diagnostic message at the location where a given
-/// variable was tainted.
-class TaintBugVisitor final : public BugReporterVisitor {
-private:
-  const SVal V;
-
-public:
-  TaintBugVisitor(const SVal V) : V(V) {}
-  void Profile(llvm::FoldingSetNodeID &ID) const override { ID.Add(V); }
-
-  PathDiagnosticPieceRef VisitNode(const ExplodedNode *N,
-                                   BugReporterContext &BRC,
-                                   PathSensitiveBugReport &BR) override;
-};
-
 } // namespace taint
 } // namespace ento
 } // namespace clang
