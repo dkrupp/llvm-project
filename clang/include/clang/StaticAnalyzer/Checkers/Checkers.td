@@ -1008,7 +1008,6 @@ def ReturnPointerRangeChecker : Checker<"ReturnPtrRange">,
 
 } // end "alpha.security"
 
-
 //===----------------------------------------------------------------------===//
 // Mac OS X, Cocoa, and Core Foundation checkers.
 //===----------------------------------------------------------------------===//
@@ -1654,6 +1653,16 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
 
 def GenericTaintChecker : Checker<"GenericTaint">,
   HelpText<"Reports potential injection vulnerabilities">,
+  CheckerOptions<[
+    CmdLineOption<Boolean,
+                  "AggressiveTaintPropagation",
+                  "If set to true and if a called function cannot be inlined, "
+                  "taintedness will be propagated to the return value and to non-const "
+                  "reference parameters",
+                  "false",
+                  Released,
+                  Hide>,
+  ]>,
   Dependencies<[TaintPropagationChecker]>,
   Documentation<HasDocumentation>;
 

@@ -258,6 +258,7 @@ public:
   unsigned ShouldEmitErrorsOnInvalidConfigValue : 1;
   unsigned AnalyzeAll : 1;
   unsigned AnalyzerDisplayProgress : 1;
+  unsigned AnalyzerFocusedTaint : 1;
   unsigned AnalyzerNoteAnalysisEntryPoints : 1;
 
   unsigned TrimGraph : 1;
@@ -322,6 +323,7 @@ public:
         ShowConfigOptionsList(false),
         ShouldEmitErrorsOnInvalidConfigValue(false), AnalyzeAll(false),
         AnalyzerDisplayProgress(false), AnalyzerNoteAnalysisEntryPoints(false),
+        AnalyzerFocusedTaint(false),
         TrimGraph(false), visualizeExplodedGraphWithGraphViz(false),
         UnoptimizedCFG(false), PrintStats(false), NoRetryExhausted(false),
         AnalyzerWerror(false) {}
