@@ -545,7 +545,7 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
   }
 
   std::set<FunctionDecl*> TaintedFunctions;
-  if (Opts.AnalyzerFocusedTaint){
+  if (Opts.AnalyzerFocusedTaint||Opts.AnalyzerInlineTaintOnly){
     TaintedFunctions = getDeclsForTaintAnalysis(CG);
     Mgr->setTaintRelatedFunctions(TaintedFunctions);
     llvm::errs()<<"Tainted functions:\n";
