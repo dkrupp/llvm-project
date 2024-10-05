@@ -1639,6 +1639,7 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
                   "Specifies the name of the configuration file.",
                   "",
                   Released>,
+
     CmdLineOption<Boolean,
                   "EnableDefaultConfig",
                   "If set to false, the default source, "
@@ -1660,9 +1661,14 @@ def GenericTaintChecker : Checker<"GenericTaint">,
                   "taintedness will be propagated to the return value and to non-const "
                   "reference parameters",
                   "false",
-                  Released,
-                  Hide>,
+                  Released>
+
   ]>,
+  Documentation<NotDocumented>,
+  Hidden;
+
+def GenericTaintChecker : Checker<"GenericTaint">,
+  HelpText<"Reports potential injection vulnerabilities">,
   Dependencies<[TaintPropagationChecker]>,
   Documentation<HasDocumentation>;
 
