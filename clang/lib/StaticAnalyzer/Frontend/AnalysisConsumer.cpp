@@ -98,6 +98,13 @@ class AnalysisConsumer : public AnalysisASTConsumer,
 
   std::vector<std::function<void(CheckerRegistry &)>> CheckerRegistrationFns;
 
+  // Functions that propagate taintedness
+  std::set<FunctionDecl*> TaintSinkPropagators;
+  std::set<FunctionDecl*> TaintSourcePropagators;
+  //actual taint sources and sinks
+  std::set<FunctionDecl*> TaintSinks;
+  std::set<FunctionDecl*> TaintSources;
+
 public:
   ASTContext *Ctx;
   Preprocessor &PP;
@@ -259,8 +266,9 @@ public:
     getInliningModeForFunction(const Decl *D, const SetOfConstDecls &Visited);
 
 
-  std::set<FunctionDecl*> getDeclsForTaintAnalysis(CallGraph &CG);
-  bool isTaintRelatedFunction(const FunctionDecl* FD);
+  void getDeclsForTaintAnalysis(CallGraph &CG);
+  bool isTaintSource(const FunctionDecl* FD);
+  bool isTaintSink(const FunctionDecl* FD);
 
 
   /// Build the call graph for all the top level decls of this TU and
@@ -484,20 +492,28 @@ AnalysisConsumer::getInliningModeForFunction(const Decl *D,
   return ExprEngine::Inline_Regular;
 }
 
-bool AnalysisConsumer::isTaintRelatedFunction(const FunctionDecl* FD){
+bool AnalysisConsumer::isTaintSource(const FunctionDecl* FD){
   std::set<std::string> sources = {"scanf","gets","getch","read","fopen","fdopen","freopen","getchar",
   "gets_s","scanf_s","getcwd","readlink","gethostname","getnameinfo","readlinkat","get_current_dir_name",
   "getseuserbyname","getgroups","getlogin","getlogin_r","popen","getenv"};
+  if (!FD || !FD->getCanonicalDecl())
+    return false;
+  std::string FN = FD->getCanonicalDecl()->getNameAsString();
+  //llvm::errs()<<"Inspecting function if tainted " << FN << "\n";
+  return (sources.count(FN));
+}
+
+bool AnalysisConsumer::isTaintSink(const FunctionDecl* FD){
   std::set<std::string> sinks = {"system", "execv","popen","malloc","calloc","memcpy","strcpy","strncpy"};
   if (!FD || !FD->getCanonicalDecl())
     return false;
   std::string FN = FD->getCanonicalDecl()->getNameAsString();
   //llvm::errs()<<"Inspecting function if tainted " << FN << "\n";
-  return (sources.count(FN) || sinks.count(FN));
+  return (sinks.count(FN));
 }
 
 // returns functions declarations required for taint analysis
-std::set<FunctionDecl*> AnalysisConsumer::getDeclsForTaintAnalysis(CallGraph &CG) {
+void AnalysisConsumer::getDeclsForTaintAnalysis(CallGraph &CG) {
   std::set<FunctionDecl*> TaintedFunctions;
   for (auto N = llvm::df_begin(&CG), EI = llvm::df_end(&CG); N != EI; N++) {
     Decl *D = N->getDecl();
@@ -516,21 +532,29 @@ std::set<FunctionDecl*> AnalysisConsumer::getDeclsForTaintAnalysis(CallGraph &CG
       FunctionDecl *CFD = dyn_cast<FunctionDecl>(Callee.Callee->getDecl());
       if (!CFD)
         continue;
-      if (isTaintRelatedFunction(CFD))
-        TaintedFunctions.insert(FD);
-      if (TaintedFunctions.find(CFD)!=TaintedFunctions.end())//if child is tainted, the parent is also tainted
-        TaintedFunctions.insert(FD);
+      if (isTaintSource(CFD)){
+        TaintSourcePropagators.insert(FD);
+        TaintSources.insert(CFD);
+      }
+      if (isTaintSink(CFD)){
+        TaintSinkPropagators.insert(FD);
+        TaintSinks.insert(CFD);
+      }
+
+      if (TaintSinkPropagators.find(CFD)!=TaintSinkPropagators.end())//if child is tainted, the parent is also tainted
+        TaintSinkPropagators.insert(FD);
+
+      if (TaintSourcePropagators.find(CFD)!=TaintSourcePropagators.end())//if child is tainted, the parent is also tainted
+        TaintSourcePropagators.insert(FD);
     }
 
-
-    if (isTaintRelatedFunction(FD)){
+    /*if (isTaintSource(FD)||isTaintSink(FD)){
       llvm::errs()<<"Called Function "<<FD->getCanonicalDecl()->getNameAsString()<<" is tainted\n";
       TaintedFunctions.insert(FD);
     } else
-      llvm::errs()<<"Called Function "<<FD->getCanonicalDecl()->getNameAsString()<<" is NOT tainted\n";
+      llvm::errs()<<"Called Function "<<FD->getCanonicalDecl()->getNameAsString()<<" is NOT tainted\n";*/
 
   }
-  return TaintedFunctions;
 }
 
 void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
@@ -544,14 +568,43 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
     CG.addToCallGraph(LocalTUDecls[i]);
   }
 
-  std::set<FunctionDecl*> TaintedFunctions;
+  std::set<FunctionDecl*> TaintedTopLevelFunctions;
+  std::set<FunctionDecl*> TaintPropagatingFunctions;
   if (Opts.AnalyzerFocusedTaint||Opts.AnalyzerInlineTaintOnly){
-    TaintedFunctions = getDeclsForTaintAnalysis(CG);
-    Mgr->setTaintRelatedFunctions(TaintedFunctions);
-    llvm::errs()<<"Tainted functions:\n";
-    for (FunctionDecl* FD:TaintedFunctions){
+    getDeclsForTaintAnalysis(CG);
+    for (auto D:TaintSourcePropagators){ // We only analyze functions which can reach both a source and a sink
+      if (TaintSinkPropagators.find(D)!=TaintSinkPropagators.end())
+        TaintedTopLevelFunctions.insert(D);
+    }
+
+    llvm::errs()<<"Taint Sources:\n";
+    for (auto FD:TaintSources){
       llvm::errs()<<FD->getNameInfo().getAsString() << "\n";
     }
+
+    llvm::errs()<<"Taint Sinks:\n";
+    for (auto FD:TaintSinks){
+      llvm::errs()<<FD->getNameInfo().getAsString() << "\n";
+    }
+
+    TaintPropagatingFunctions.insert(TaintSourcePropagators.begin(),TaintSourcePropagators.end());
+    TaintPropagatingFunctions.insert(TaintSinkPropagators.begin(),TaintSinkPropagators.end());
+    Mgr->setTaintRelatedFunctions(TaintPropagatingFunctions);
+    llvm::errs()<<"Taint propagating TopLevel functions:\n";
+    for (FunctionDecl* FD:TaintedTopLevelFunctions){
+      llvm::errs()<<FD->getNameInfo().getAsString() << "\n";
+    }
+
+    llvm::errs()<<"Taint Source propagating functions:\n";
+    for (FunctionDecl* FD:TaintSourcePropagators){
+      llvm::errs()<<FD->getNameInfo().getAsString() << "\n";
+    }
+
+    llvm::errs()<<"Taint Sink propagating functions:\n";
+    for (FunctionDecl* FD:TaintSinkPropagators){
+      llvm::errs()<<FD->getNameInfo().getAsString() << "\n";
+    }
+
   }
 
   // Walk over all of the call graph nodes in topological order, so that we
@@ -573,9 +626,15 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
       continue;
 
 
+    bool MustAnalyze=false;
+    if (Opts.AnalyzerFocusedTaint){
+      auto *FD = dyn_cast<FunctionDecl>(D);
+      MustAnalyze = TaintedTopLevelFunctions.find(FD)!=TaintedTopLevelFunctions.end();
+    }
+
     // Skip the functions which have been processed already or previously
     // inlined.
-    if (shouldSkipFunction(D, Visited, VisitedAsTopLevel))
+    if (!MustAnalyze && shouldSkipFunction(D, Visited, VisitedAsTopLevel))
       continue;
 
     // The CallGraph might have declarations as callees. However, during CTU
@@ -593,7 +652,7 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
     if (Opts.AnalyzerFocusedTaint) {
       // if the function is not taint related skip it.
       auto *FD = dyn_cast<FunctionDecl>(D);
-      if (TaintedFunctions.find(FD) == TaintedFunctions.end()) {
+      if (TaintedTopLevelFunctions.find(FD) == TaintedTopLevelFunctions.end()) {
         llvm::errs()
             << "Skipping not taint related function from the analysis:\n";
         llvm::errs() << FD->getNameInfo().getAsString() << "\n";
