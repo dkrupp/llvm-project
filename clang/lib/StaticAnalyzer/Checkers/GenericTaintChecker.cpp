@@ -393,6 +393,9 @@ public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
 
+  // Make all escapign paramters tainted if at least one parameter is tainted
+  void makeEscapingParamsTainted( const CallEvent &Call, CheckerContext &C) const;
+
   void printState(raw_ostream &Out, ProgramStateRef State, const char *NL,
                   const char *Sep) const override;
 
@@ -851,6 +854,8 @@ void GenericTaintChecker::checkPreCall(const CallEvent &Call,
   else if (const auto *Rule = DynamicTaintRules->lookup(Call))
     Rule->process(*this, Call, C);
 
+  if (this->AggressiveTaintPropagation)
+    makeEscapingParamsTainted(Call, C);
   // FIXME: These edge cases are to be eliminated from here eventually.
   //
   // Additional check that is not supported by CallDescription.
@@ -888,18 +893,22 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   if (!C.wasInlined && !TaintArgs) {
     llvm::errs() << "PostCall<";
     Call.dump(llvm::errs());
-    llvm::errs() << "Was not inlined.\n";
+    llvm::errs() << " Was not inlined.\n";
     /// Check for taint sinks.
     ProgramStateRef State = C.getState();
     bool HasTaintedParam = false;
+    int num_args=0;
     for (ArgIdxTy I = ReturnValueIndex; I < CallNumArgs; ++I) {
+      num_args++;
       const Expr *E = GetArgExpr(I, Call);
       if (!E)
         continue;
       HasTaintedParam =
           HasTaintedParam || isTaintedOrPointsToTainted(State, C.getSVal(E));
+      llvm::errs() << "param:"<<E<<" is tainted: "<<HasTaintedParam;
     }
-    llvm::errs() << "\nHasTaintedParam:" << HasTaintedParam << "\n";
+    llvm::errs() << "\nNof args:"<<num_args<<" HasTaintedParam:" << HasTaintedParam << "\n";
+    /*
     if (HasTaintedParam && !TaintArgs && AggressiveTaintPropagation) {
       llvm::errs() << "Making return value and writable params tainted.\n";
       llvm::errs() << "Number of params:" << CallNumArgs;
@@ -923,7 +932,7 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
         }
       }
       TaintArgs = &ApproxTaintedArgs;
-    }
+    }*/
   }
 
   if (!TaintArgs)
@@ -977,6 +986,68 @@ void GenericTaintChecker::printState(raw_ostream &Out, ProgramStateRef State,
   printTaint(State, Out, NL, Sep);
 }
 
+void GenericTaintChecker::makeEscapingParamsTainted(
+    const CallEvent &Call,
+    CheckerContext &C) const {
+
+  ProgramStateRef State = C.getState();
+  const ArgIdxTy CallNumArgs = fromArgumentCount(Call.getNumArgs());
+  /// Iterate every call argument, and get their corresponding Expr and SVal.
+  const auto ForEachCallArg = [&C, &Call, CallNumArgs](auto &&Fun) {
+    for (ArgIdxTy I = ReturnValueIndex; I < CallNumArgs; ++I) {
+      const Expr *E = GetArgExpr(I, Call);
+      if (E)
+        Fun(I, E, C.getSVal(E));
+    }
+  };
+
+  const auto WouldEscape = [](SVal V, QualType Ty) -> bool {
+    if (!isa<Loc>(V))
+      return false;
+
+    const bool IsNonConstRef = Ty->isReferenceType() && !Ty.isConstQualified();
+    const bool IsNonConstPtr =
+        Ty->isPointerType() && !Ty->getPointeeType().isConstQualified();
+
+    return IsNonConstRef || IsNonConstPtr;
+  };
+
+  bool HasTaintedParam = false;
+
+  ForEachCallArg(
+      [this, &C, &HasTaintedParam, &State](ArgIdxTy I, const Expr *E, SVal) {
+        std::optional<SVal> TaintedSVal =
+            getTaintedPointeeOrPointer(State, C.getSVal(E));
+        HasTaintedParam = HasTaintedParam || TaintedSVal.has_value();
+      });
+  llvm::errs() << "PreCall<";
+        Call.dump(llvm::errs());
+        llvm::errs() << "> has taintedParam " << HasTaintedParam << '\n';
+  /// Propagate taint where it is necessary.
+  auto &F = State->getStateManager().get_context<ArgIdxFactory>();
+  ImmutableSet<ArgIdxTy> Result = F.getEmptySet();
+  ForEachCallArg([&](ArgIdxTy I, const Expr *E, SVal V) {
+    // Taint property gets lost if the variable is passed as a
+    // non-const pointer or reference to a function which is
+    // not inlined. If there is at least one tainted parameter
+    // we make all escaping parameter tainted.
+
+    if (WouldEscape(V, E->getType()) && this->AggressiveTaintPropagation &&
+        HasTaintedParam) {
+      if (!Result.contains(I)) {
+        llvm::errs() << "PreCall<";
+        Call.dump(llvm::errs());
+        llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
+                     << I << '\n';
+        Result = F.add(Result, I);
+      }
+    }
+  });
+  if (!Result.isEmpty())
+    State = State->set<TaintArgsOnPostVisit>(C.getStackFrame(), Result);
+  C.addTransition(State);
+}
+
 void GenericTaintRule::process(const GenericTaintChecker &Checker,
                                const CallEvent &Call, CheckerContext &C) const {
   ProgramStateRef State = C.getState();
@@ -1017,13 +1088,13 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
   bool IsMatching = PropSrcArgs.isEmpty();
   std::vector<SymbolRef> TaintedSymbols;
   std::vector<ArgIdxTy> TaintedIndexes;
-  ForEachCallArg([this, &C, &IsMatching, &State, &TaintedSymbols,
+  ForEachCallArg([this, &C, &IsMatching, &State,
+                  &TaintedSymbols,
                   &TaintedIndexes](ArgIdxTy I, const Expr *E, SVal) {
     std::optional<SVal> TaintedSVal =
         getTaintedPointeeOrPointer(State, C.getSVal(E));
     IsMatching =
         IsMatching || (PropSrcArgs.contains(I) && TaintedSVal.has_value());
-
     // We track back tainted arguments except for stdin
     if (TaintedSVal && !isStdin(*TaintedSVal, C.getASTContext())) {
       std::vector<SymbolRef> TaintedArgSyms =
@@ -1054,30 +1125,33 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
   /// Propagate taint where it is necessary.
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
   ImmutableSet<ArgIdxTy> Result = F.getEmptySet();
-  ForEachCallArg(
-      [&](ArgIdxTy I, const Expr *E, SVal V) {
-        if (PropDstArgs.contains(I)) {
-          LLVM_DEBUG(llvm::dbgs() << "PreCall<"; Call.dump(llvm::dbgs());
-                     llvm::dbgs()
-                     << "> prepares tainting arg index: " << I << '\n';);
-          Result = F.add(Result, I);
-        }
+  ForEachCallArg([&](ArgIdxTy I, const Expr *E, SVal V) {
+    if (PropDstArgs.contains(I)) {
+      LLVM_DEBUG(llvm::dbgs() << "PreCall<"; Call.dump(llvm::dbgs());
+                 llvm::dbgs()
+                 << "> prepares tainting arg index: " << I << '\n';);
 
-        // Taint property gets lost if the variable is passed as a
-        // non-const pointer or reference to a function which is
-        // not inlined. For matching rules we want to preserve the taintedness.
-        // TODO: We should traverse all reachable memory regions via the
-        // escaping parameter. Instead of doing that we simply mark only the
-        // referred memory region as tainted.
-        if (WouldEscape(V, E->getType()) && getTaintedPointeeOrPointer(State, V)) {
-          LLVM_DEBUG(if (!Result.contains(I)) {
-            llvm::dbgs() << "PreCall<";
-            Call.dump(llvm::dbgs());
-            llvm::dbgs() << "> prepares tainting arg index: " << I << '\n';
-          });
-          Result = F.add(Result, I);
-        }
+      llvm::errs() << "PreCall<";
+      Call.dump(llvm::errs());
+      llvm::errs() << "> prepares tainting arg index: " << I << '\n';
+      Result = F.add(Result, I);
+    }
+
+    // Taint property gets lost if the variable is passed as a
+    // non-const pointer or reference to a function which is
+    // not inlined. For matching rules we want to preserve the taintedness.
+    // TODO: We should traverse all reachable memory regions via the
+    // escaping parameter. Instead of doing that we simply mark only the
+    // referred memory region as tainted.
+    if (WouldEscape(V, E->getType()) && getTaintedPointeeOrPointer(State, V)) {
+      LLVM_DEBUG(if (!Result.contains(I)) {
+        llvm::dbgs() << "PreCall<";
+        Call.dump(llvm::dbgs());
+        llvm::dbgs() << "> prepares tainting arg index: " << I << '\n';
       });
+      Result = F.add(Result, I);
+    }
+  });
 
   if (!Result.isEmpty())
     State = State->set<TaintArgsOnPostVisit>(C.getStackFrame(), Result);
