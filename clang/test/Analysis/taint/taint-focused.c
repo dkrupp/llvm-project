@@ -4,10 +4,11 @@
 // RUN: -analyzer-config analyzer-focused-taint=false \
 // RUN: -analyzer-checker=debug.ExprInspection \
 // RUN: -analyzer-config analyzer-inline-taint-only=false \
-// RUN: -analyzer-config analyzer-always-inline-tainted=false \
+// RUN: -analyzer-config analyzer-always-inline-tainted=true \
 // RUN: -Wno-format-security -verify %s
 
-void clang_analyzer_isTainted(char);
+//void clang_analyzer_isTainted(char);
+void clang_analyzer_isTainted(int);
 void clang_analyzer_isTainted_any_suffix(char);
 void clang_analyzer_isTainted_many_arguments(char, int, int);
 
@@ -21,6 +22,7 @@ int getchar(void);
 int system(const char *command);
 char *strcat( char *dest, const char *src );
 int printf( const char* format, ... );
+int sprintf( char* buffer, const char* format, ... );
 void *malloc(unsigned long);
 void free( void *ptr );
 
@@ -125,6 +127,31 @@ void test_large_loop3(int input){
   char filename[1024];
   fetchTaintedString (filename);
   int i = complex_function(filename); // tainted value is lost from filename because complex function cannot be analyzed
+  clang_analyzer_isTainted(i); // expected-warning{{YES}}
+  clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
+  strcat(cmd, filename);
+  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+}
+
+
+// Test large_loop4
+// large loop before sink in a complex function
+// which receives the tainted string as a parameter
+// FAILS in baseline
+
+int complex_function_const(const char* filename){
+  int i=0;
+  while(i<1000){//analysis does not progress beyond this point
+    i++;
+  }
+  return i;
+}
+
+void test_large_loop4(int input){
+  char cmd[2048] = "/bin/cat ";
+  char filename[1024];
+  fetchTaintedString (filename);
+  int i = complex_function_const(filename); // tainted value is lost from filename because complex function cannot be analyzed
   clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
   strcat(cmd, filename);
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
@@ -164,8 +191,27 @@ void test_unknown_transform2(int input){
   char filename_transformed[1024];
   fetchTaintedString (filename);
   unknownTransformInOut(filename, filename_transformed); // taintedness gets lost here
+  clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
+  clang_analyzer_isTainted(*filename_transformed); // expected-warning{{YES}}
   strcat(cmd, filename_transformed);
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+}
+
+// Test
+
+void knownTransformInOut(char* in, char* out){ //out is not a tainted string even if in is tainted
+  sprintf(out,"%s","hello");
+}
+void test_known_transform(int input){
+  char cmd[2048] = "/bin/cat ";
+  char filename[1024];
+  char filename_transformed[1024];
+  fetchTaintedString (filename);
+  knownTransformInOut(filename, filename_transformed); // taintedness gets lost here
+  clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
+  clang_analyzer_isTainted(*filename_transformed); // expected-warning{{NO}}
+  strcat(cmd, filename_transformed);
+  system(cmd);
 }
 
 

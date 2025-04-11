@@ -853,8 +853,7 @@ void GenericTaintChecker::checkPreCall(const CallEvent &Call,
     Rule->process(*this, Call, C);
   else if (const auto *Rule = DynamicTaintRules->lookup(Call))
     Rule->process(*this, Call, C);
-
-  if (this->AggressiveTaintPropagation)
+  else if (this->AggressiveTaintPropagation)
     makeEscapingParamsTainted(Call, C);
   // FIXME: These edge cases are to be eliminated from here eventually.
   //
@@ -890,6 +889,15 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
   ImmutableSet<ArgIdxTy> ApproxTaintedArgs = F.add(F.getEmptySet(), ReturnValueIndex);
 
+  if (C.wasInlined && TaintArgs  && !TaintArgs->isEmpty()){
+    //we don't need to propagate taintedness artifically
+    //since the function was inlined
+
+    // Clear up the taint info from the state.
+    State = State->remove<TaintArgsOnPostVisit>(CurrentFrame);
+    C.addTransition(State);
+    return;
+  }
   if (!C.wasInlined && !TaintArgs) {
     llvm::errs() << "PostCall<";
     Call.dump(llvm::errs());
@@ -905,9 +913,10 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
         continue;
       HasTaintedParam =
           HasTaintedParam || isTaintedOrPointsToTainted(State, C.getSVal(E));
-      llvm::errs() << "param:"<<E<<" is tainted: "<<HasTaintedParam;
+      llvm::errs() << "param:"<<E<<" is tainted: "<<HasTaintedParam<<"\n";
     }
-    llvm::errs() << "\nNof args:"<<num_args<<" HasTaintedParam:" << HasTaintedParam << "\n";
+    if (HasTaintedParam)
+      llvm::errs() << "\nAGGRESSIVELY TAINTING. Nof args:"<<num_args<<" HasTaintedParam:" << HasTaintedParam << "\n";
     /*
     if (HasTaintedParam && !TaintArgs && AggressiveTaintPropagation) {
       llvm::errs() << "Making return value and writable params tainted.\n";
@@ -950,6 +959,7 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   std::vector<SymbolRef> TaintedSymbols;
   std::vector<ArgIdxTy> TaintedIndexes;
   for (ArgIdxTy ArgNum : *TaintArgs) {
+    llvm::errs()<<"Post call taintedness arg:"<<ArgNum<<" \n";
     // Special handling for the tainted return value.
     if (ArgNum == ReturnValueIndex) {
       State = addTaint(State, Call.getReturnValue());
@@ -1037,8 +1047,8 @@ void GenericTaintChecker::makeEscapingParamsTainted(
       if (!Result.contains(I)) {
         llvm::errs() << "PreCall<";
         Call.dump(llvm::errs());
-        llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
-                     << I << '\n';
+        //llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
+        //             << I << '\n';
         Result = F.add(Result, I);
       }
     }
@@ -1149,7 +1159,7 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
         Call.dump(llvm::dbgs());
         llvm::dbgs() << "> prepares tainting arg index: " << I << '\n';
       });
-      Result = F.add(Result, I);
+
     }
   });
 
