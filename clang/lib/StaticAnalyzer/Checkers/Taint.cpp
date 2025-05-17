@@ -13,7 +13,8 @@
 #include "clang/StaticAnalyzer/Checkers/Taint.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporter.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
-#include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/MemRegion.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
 #include <optional>
 
 using namespace clang;
@@ -28,6 +29,18 @@ REGISTER_MAP_FACTORY_WITH_PROGRAMSTATE(TaintedSubRegions, const SubRegion *,
                                        TaintTagType)
 REGISTER_MAP_WITH_PROGRAMSTATE(DerivedSymTaint, SymbolRef, TaintedSubRegions)
 
+
+// Tainted array elements cache
+// the ground truth information is in the TaintMap
+
+REGISTER_MAP_WITH_PROGRAMSTATE(TaintedElementInArrayHint, const MemRegion *, const MemRegion *)
+
+// TODO: There could be more than one tainted MemRegion.
+// The stored value should be a set (llvm::ImmutableSet)
+// TODO:cleanup logic to be added:
+// clean the key memregion if the it becomes unused
+// take out the value if it turns out that it is not tainted anymore
+
 void taint::printTaint(ProgramStateRef State, raw_ostream &Out, const char *NL,
                        const char *Sep) {
   TaintMapTy TM = State->get<TaintMap>();
@@ -37,6 +50,7 @@ void taint::printTaint(ProgramStateRef State, raw_ostream &Out, const char *NL,
 
   for (const auto &I : TM)
     Out << I.first << " : " << I.second << NL;
+
 }
 
 void taint::dumpTaint(ProgramStateRef State) {
@@ -52,6 +66,7 @@ ProgramStateRef taint::addTaint(ProgramStateRef State, const Stmt *S,
 ProgramStateRef taint::addTaint(ProgramStateRef State, SVal V,
                                 TaintTagType Kind) {
   SymbolRef Sym = V.getAsSymbol();
+
   if (Sym)
     return addTaint(State, Sym, Kind);
 
@@ -72,7 +87,8 @@ ProgramStateRef taint::addTaint(ProgramStateRef State, SVal V,
         return addPartialTaint(State, Sym, LCV->getRegion(), Kind);
     }
   }
-
+  // TODO: this is redundant because currently addTaint(*, MemRegion*, *) only
+  // adds taints to symbolic regions and those already handled by the symbol case
   const MemRegion *R = V.getAsRegion();
   return addTaint(State, R, Kind);
 }
@@ -90,6 +106,18 @@ ProgramStateRef taint::addTaint(ProgramStateRef State, SymbolRef Sym,
   // is cast agnostic.
   while (const SymbolCast *SC = dyn_cast<SymbolCast>(Sym))
     Sym = SC->getOperand();
+
+
+  const SymbolDerived *SD = dyn_cast<SymbolDerived>(Sym);
+  if (SD){
+    const MemRegion *Reg = SD->getRegion();
+    const MemRegion *SurroundingArray = Reg;
+    while (const auto *ER = SurroundingArray->getAs<ElementRegion>())
+      SurroundingArray = ER->getSuperRegion();
+    if (SurroundingArray != Reg) {
+      State = State->set<TaintedElementInArrayHint>(SurroundingArray, Reg);
+    }
+  }
 
   ProgramStateRef NewState = State->set<TaintMap>(Sym, Kind);
   assert(NewState);
@@ -167,6 +195,26 @@ bool taint::isTainted(ProgramStateRef State, SymbolRef Sym, TaintTagType Kind) {
               .empty();
 }
 
+
+std::vector<SVal> taint::getTaintedSValsInArray(ProgramStateRef State,
+                                                const MemRegion* MR
+                                                ) {
+  std::vector<SVal> TaintedSVals;
+  const MemRegion *SurroundingArray = MR;
+  while (const auto *ER = SurroundingArray->getAs<ElementRegion>()){
+    llvm::errs()<<"ER: "<<ER<<"\n";
+    SurroundingArray = ER->getSuperRegion();
+  }
+  const MemRegion* const * TaintedElement = State->get<TaintedElementInArrayHint>(SurroundingArray);
+
+  if (TaintedElement){
+    SVal SuspiciousSV = State->getSVal(*TaintedElement);
+    if (isTainted(State, SuspiciousSV))
+      TaintedSVals.push_back(SuspiciousSV);
+    }
+  return TaintedSVals;
+}
+
 std::vector<SymbolRef> taint::getTaintedSymbols(ProgramStateRef State,
                                                 const Stmt *S,
                                                 const LocationContext *LCtx,
@@ -203,6 +251,7 @@ std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
 std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
                                                     SVal V, TaintTagType Kind,
                                                     bool returnFirstOnly) {
+
   if (SymbolRef Sym = V.getAsSymbol())
     return getTaintedSymbolsImpl(State, Sym, Kind, returnFirstOnly);
   if (const MemRegion *Reg = V.getAsRegion())
@@ -225,12 +274,12 @@ std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
   std::vector<SymbolRef> TaintedSymbols;
   if (!Reg)
     return TaintedSymbols;
-
-  // Element region (array element) is tainted if the offset is tainted.
+  // Element region (array element) is tainted if the offset or the baseregion is tainted.
   if (const ElementRegion *ER = dyn_cast<ElementRegion>(Reg)) {
     std::vector<SymbolRef> TaintedIndex =
         getTaintedSymbolsImpl(State, ER->getIndex(), K, returnFirstOnly);
     llvm::append_range(TaintedSymbols, TaintedIndex);
+
     if (returnFirstOnly && !TaintedSymbols.empty())
       return TaintedSymbols; // return early if needed
   }
@@ -285,6 +334,7 @@ std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
     }
 
     if (const auto *SD = dyn_cast<SymbolDerived>(SubSym)) {
+      const ElementRegion *ER = dyn_cast<ElementRegion>(SD->getRegion());
       // If this is a SymbolDerived with a tainted parent, it's also tainted.
       std::vector<SymbolRef> TaintedParents = getTaintedSymbolsImpl(
           State, SD->getParentSymbol(), Kind, returnFirstOnly);
@@ -313,6 +363,8 @@ std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
     }
 
     // If memory region is tainted, data is also tainted.
+    //TODO: this is a bug, because this is the regions where the value originated
+    //and it may become tainted after the value was moved from there
     if (const auto *SRV = dyn_cast<SymbolRegionValue>(SubSym)) {
       std::vector<SymbolRef> TaintedRegions =
           getTaintedSymbolsImpl(State, SRV->getRegion(), Kind, returnFirstOnly);
@@ -322,6 +374,7 @@ std::vector<SymbolRef> taint::getTaintedSymbolsImpl(ProgramStateRef State,
     }
 
     // If this is a SymbolCast from a tainted value, it's also tainted.
+    // TODO: this is probably redundant with the for loop (Sym->symbols() already returns this)
     if (const auto *SC = dyn_cast<SymbolCast>(SubSym)) {
       std::vector<SymbolRef> TaintedCasts =
           getTaintedSymbolsImpl(State, SC->getOperand(), Kind, returnFirstOnly);

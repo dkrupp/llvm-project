@@ -15,6 +15,7 @@
 
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporterVisitors.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
 
 namespace clang {
 namespace ento {
@@ -116,6 +117,9 @@ std::vector<SymbolRef> getTaintedSymbolsImpl(ProgramStateRef State,
                                              const MemRegion *Reg,
                                              TaintTagType Kind,
                                              bool returnFirstOnly);
+
+std::vector<SVal> getTaintedSValsInArray(ProgramStateRef State,
+                                                const MemRegion* MR);
 
 void printTaint(ProgramStateRef State, raw_ostream &Out, const char *nl = "\n",
                 const char *sep = "");

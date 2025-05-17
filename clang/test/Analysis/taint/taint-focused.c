@@ -252,3 +252,33 @@ void asyncSystemCmd(void){
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
   free(filenameOnHeap_global);
 }
+
+
+
+// Testing taint propagation when the destination
+// is a pointer arithm
+// PASSES in baseline
+
+void test_tainted_pointer_arithm(int input){
+  char cmd[2048] = "/bin/cat ";
+  char* filenameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (filenameOnHeap);
+  strcat(cmd+3, filenameOnHeap); //performing arithmetic on pointer
+  clang_analyzer_isTainted(*(cmd+3)); // expected-warning{{YES}}
+  system(cmd+3);// expected-warning {{Untrusted data is passed to a system call}}
+  free(filenameOnHeap);
+}
+
+// Testing taint propagation when the destination
+// is a pointer arithm
+// PASSES in baseline
+
+void test_tainted_pointer_arithm2(int input){
+  char cmd[2048] = "/bin/cat ";
+  char* filenameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (filenameOnHeap);
+  strcat(cmd+6, filenameOnHeap); //performing arithmetic on pointer
+  clang_analyzer_isTainted(*cmd); // expected-warning{{NO}}
+  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  free(filenameOnHeap);
+}
