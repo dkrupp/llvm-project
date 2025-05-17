@@ -25,6 +25,8 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CheckerContext.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
+#include "clang/StaticAnalyzer/Core/PathSensitive/SVals.h"
+#include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/YAMLTraits.h"
@@ -130,12 +132,23 @@ std::optional<SVal> getPointeeOf(ProgramStateRef State, SVal Arg) {
 /// Also considers stdin as a taint source.
 std::optional<SVal> getTaintedPointeeOrPointer(ProgramStateRef State,
                                                SVal Arg) {
+
+
   if (auto Pointee = getPointeeOf(State, Arg))
     if (isTainted(State, *Pointee)) // FIXME: isTainted(...) ? Pointee : None;
       return Pointee;
 
   if (isTainted(State, Arg))
     return Arg;
+
+  // The pointed value is tainted if it points to an array
+  // and if any element of that array is tainted
+  if (const MemRegion *R = Arg.getAsRegion()) {
+    llvm::errs()<<"Checking taintedness of array "<<R<<"\n";
+    std::vector<SVal> taintedSVals = getTaintedSValsInArray(State,R);
+    if (!taintedSVals.empty())
+      return taintedSVals[0];
+  }
   return std::nullopt;
 }
 
