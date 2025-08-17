@@ -1052,9 +1052,9 @@ void GenericTaintChecker::makeEscapingParamsTainted(
     // Taint property gets lost if the variable is passed as a
     // non-const pointer or reference to a function which is
     // not inlined. If there is at least one tainted parameter
-    // we make all escaping parameter tainted.
+    // we make all escaping parameter tainted, even the return value.
 
-    if (WouldEscape(V, E->getType()) && this->AggressiveTaintPropagation &&
+    if ((WouldEscape(V, E->getType())||I==ReturnValueIndex) && this->AggressiveTaintPropagation &&
         HasTaintedParam) {
       if (!Result.contains(I)) {
         llvm::errs() << "PreCall<";

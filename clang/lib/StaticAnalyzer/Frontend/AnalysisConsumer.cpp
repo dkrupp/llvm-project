@@ -524,10 +524,6 @@ void AnalysisConsumer::getDeclsForTaintAnalysis(CallGraph &CG) {
     auto *FD = dyn_cast<FunctionDecl>(D);
     if (!FD)
       continue;
-    if (FD->getDefinition()) {
-      llvm::errs() << "Visiting function: " << FD->getNameInfo().getAsString() << "\n";
-    }
-
     for (auto Callee : N->callees()){
       FunctionDecl *CFD = dyn_cast<FunctionDecl>(Callee.Callee->getDecl());
       if (!CFD)
@@ -630,12 +626,15 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
     if (Opts.AnalyzerFocusedTaint){
       auto *FD = dyn_cast<FunctionDecl>(D);
       MustAnalyze = TaintedTopLevelFunctions.find(FD)!=TaintedTopLevelFunctions.end();
+      llvm::errs() << "Function: " << FD->getNameInfo().getAsString() << "MustAnalyze: "<<MustAnalyze<<"\n";
     }
 
     // Skip the functions which have been processed already or previously
-    // inlined.
-    if (!MustAnalyze && shouldSkipFunction(D, Visited, VisitedAsTopLevel))
-      continue;
+    // inlined except if it is taint related.
+    if (!MustAnalyze && shouldSkipFunction(D, Visited, VisitedAsTopLevel)){
+        llvm::errs() << "Function: " << D->getAsFunction()->getNameInfo().getAsString()<< " SKIPPED as TOP LEVEL\n";
+        continue;
+    }
 
     // The CallGraph might have declarations as callees. However, during CTU
     // the declaration might form a declaration chain with the newly imported
@@ -662,6 +661,8 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
 
     // Analyze the function.
     SetOfConstDecls VisitedCallees;
+    auto *FD = dyn_cast<FunctionDecl>(D);
+    llvm::errs() << "Analyzing Function: " << FD->getNameInfo().getAsString() << " on the TOP Level\n";
 
     HandleCode(D, AM_Path, getInliningModeForFunction(D, Visited),
                (Mgr->options.InliningMode == All ? nullptr : &VisitedCallees));
