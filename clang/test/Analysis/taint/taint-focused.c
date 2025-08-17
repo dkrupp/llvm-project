@@ -1,9 +1,9 @@
 // RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
 // RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
-// RUN: -analyzer-config optin.taint.TaintPropagation:AggressiveTaintPropagation=true \
-// RUN: -analyzer-config analyzer-focused-taint=false \
+// RUN: -analyzer-config optin.taint.TaintPropagation:AggressiveTaintPropagation=false \
+// RUN: -analyzer-config analyzer-focused-taint=true \
 // RUN: -analyzer-checker=debug.ExprInspection \
-// RUN: -analyzer-config analyzer-inline-taint-only=false \
+// RUN: -analyzer-config analyzer-inline-taint-only=true \
 // RUN: -analyzer-config analyzer-always-inline-tainted=true \
 // RUN: -Wno-format-security -verify %s
 
@@ -21,6 +21,8 @@ char *gets_s(char *str, rsize_t n);
 int getchar(void);
 int system(const char *command);
 char *strcat( char *dest, const char *src );
+char* strcpy( char* dest, const char* src );
+size_t strlen( const char* str );
 int printf( const char* format, ... );
 int sprintf( char* buffer, const char* format, ... );
 void *malloc(unsigned long);
@@ -43,7 +45,7 @@ void exec(char* cmd){
 // Interprocedural test
 // PASSES in baseline
 
-void topLevel(){
+void vulnerableCat(){
   char cmd[2048] = "/bin/cat ";
   char filename[1024];
   fetchTaintedString (filename);
@@ -54,6 +56,23 @@ void topLevel(){
 
 void printNum(int data){
   printf("Data:%d\n",data);
+}
+
+//This function should not be inlined in
+//focused taint analysis mode as it only calls a taint source
+void topLevelSrcOnly(){
+  char cmd[2048] = "/bin/cat ";
+  char filename[1024];
+  fetchTaintedString (filename);
+  printNum(1);
+}
+
+
+//This function should not be inlined in
+//focused taint analysis mode as it only calls a taint source
+void topLevelSinkOnly(){
+  char cmd[2048] = "/bin/cat ";
+  exec(cmd);
 }
 
 // Test 2
@@ -281,4 +300,54 @@ void test_tainted_pointer_arithm2(int input){
   clang_analyzer_isTainted(*cmd); // expected-warning{{NO}}
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
   free(filenameOnHeap);
+}
+
+
+void test_lost_printf(){
+  char cmd[2048] = "/bin/cat ";
+  char* filenameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (filenameOnHeap);
+  printf("tainted input:%s\n",filenameOnHeap); // taintedness gets lost here
+  strcat(cmd, filenameOnHeap);
+  clang_analyzer_isTainted(*cmd); // expected-warning{{YES}}
+  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  free(filenameOnHeap);
+}
+
+extern char* unknownTransformRet(char* txt);
+
+// When a function is not inlined
+// the return value must be tainted
+// when aggressive propagation is enabled
+void test_aggressive_return(){
+  char cmd[2048] = "/bin/cat ";
+  char* filenameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (filenameOnHeap);
+  char* ret = unknownTransformRet(filenameOnHeap);
+  strcat(cmd, ret);
+  clang_analyzer_isTainted(*cmd); // expected-warning{{YES}}
+  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  free(filenameOnHeap);
+  free (ret);
+}
+
+
+char* knownTranforReturn(char* txt){
+  char* ret = (char*) malloc(strlen("hello")+1);
+  strcpy(ret,"hello");
+  return ret;
+}
+// When a function is properly inlined
+// the return value must not be tainted
+// even with aggressive propagation
+void test_known_return(){
+  char cmd[2048] = "/bin/cat ";
+  char* filenameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (filenameOnHeap);
+  char* goodString = knownTranforReturn(filenameOnHeap);
+  strcat(cmd, goodString);
+  clang_analyzer_isTainted(*cmd); // expected-warning{{NO}}
+  system(cmd);
+  free(filenameOnHeap);
+  free (goodString);
 }
