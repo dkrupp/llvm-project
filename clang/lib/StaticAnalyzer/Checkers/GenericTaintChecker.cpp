@@ -63,6 +63,14 @@ constexpr llvm::StringLiteral MsgSanitizeSystemArgs =
     "Untrusted data is passed to a system call "
     "(CERT/STR02-C. Sanitize data passed to complex subsystems)";
 
+constexpr llvm::StringLiteral MsgUntrustedCopy =
+    "Unrestricted copy of untrusted data can cause buffer overflow"
+    "(CERT/STR31-C. Sanitize the data or use of strncpy/strncat/...)";
+
+constexpr llvm::StringLiteral MsgUntrustedSize =
+    "The size parameter can be controlled by an attacker to cause buffer overflow."
+    "Consider sanitizing the parameter before using it.";
+
 /// Check if tainted data is used as a custom sink's parameter.
 constexpr llvm::StringLiteral MsgCustomSink =
     "Untrusted data is passed to a user-defined sink";
@@ -310,6 +318,14 @@ public:
   /// Make a rule that taints all PropDstArgs if any of PropSrcArgs is tainted.
   static GenericTaintRule Prop(ArgSet &&SrcArgs, ArgSet &&DstArgs) {
     return {{}, {}, std::move(SrcArgs), std::move(DstArgs)};
+  }
+
+  /// Make a rule that taints all PropDstArgs if any of PropSrcArgs is tainted.
+  static GenericTaintRule
+  PropSink(ArgSet &&SrcArgs, ArgSet &&DstArgs, ArgSet &&SinkArgs,
+           std::optional<StringRef> Msg = std::nullopt) {
+    return {
+        std::move(SinkArgs), {}, std::move(SrcArgs), std::move(DstArgs), Msg};
   }
 
   /// Process a function which could either be a taint source, a taint sink, a
@@ -755,20 +771,19 @@ void GenericTaintChecker::initTaintRules(CheckerContext &C) const {
       {{CDM::CLibrary, {"isupper"}}, TR::Prop({{0}}, {{ReturnValueIndex}})},
       {{CDM::CLibrary, {"isxdigit"}}, TR::Prop({{0}}, {{ReturnValueIndex}})},
 
-      {{CDM::CLibraryMaybeHardened, {"strcpy"}},
-       TR::Prop({{1}}, {{0, ReturnValueIndex}})},
       {{CDM::CLibraryMaybeHardened, {"stpcpy"}},
        TR::Prop({{1}}, {{0, ReturnValueIndex}})},
-      {{CDM::CLibraryMaybeHardened, {"strcat"}},
-       TR::Prop({{0, 1}}, {{0, ReturnValueIndex}})},
       {{CDM::CLibraryMaybeHardened, {"wcsncat"}},
-       TR::Prop({{0, 1}}, {{0, ReturnValueIndex}})},
-      {{CDM::CLibraryMaybeHardened, {"strncpy"}},
-       TR::Prop({{1, 2}}, {{0, ReturnValueIndex}})},
+       TR::PropSink({{0, 1}}, {{0, ReturnValueIndex}},{{2}}, MsgUntrustedSize)},
+      {{CDM::CLibraryMaybeHardened, {"wcsncpy"}},
+        TR::PropSink({{1}}, {{0, ReturnValueIndex}},{{2}}, MsgUntrustedSize)},
+      //errno_t wcsncpy_s( wchar_t *restrict dest, rsize_t destsz, const wchar_t *restrict src, rsize_t count);
+      {{CDM::CLibraryMaybeHardened, {"wcsncpy"}},
+        TR::PropSink({{2}}, {{0}},{{1,3}}, MsgUntrustedSize)},
       {{CDM::CLibraryMaybeHardened, {"strncat"}},
        TR::Prop({{0, 1, 2}}, {{0, ReturnValueIndex}})},
-      {{CDM::CLibraryMaybeHardened, {"strlcpy"}}, TR::Prop({{1, 2}}, {{0}})},
-      {{CDM::CLibraryMaybeHardened, {"strlcat"}}, TR::Prop({{0, 1, 2}}, {{0}})},
+      {{CDM::CLibraryMaybeHardened, {"strlcpy"}}, TR::PropSink({{1}}, {{0}},{{2}}, MsgUntrustedSize)},
+      {{CDM::CLibraryMaybeHardened, {"strlcat"}}, TR::PropSink({{0, 1}}, {{0}},{{2}}, MsgUntrustedSize)},
 
       // Usually the matching mode `CDM::CLibraryMaybeHardened` is sufficient
       // for unified handling of a function `FOO()` and its hardened variant
@@ -777,7 +792,7 @@ void GenericTaintChecker::initTaintRules(CheckerContext &C) const {
       // so that would not work in their case.
       // int snprintf(char * str, size_t maxlen, const char * format, ...);
       {{CDM::CLibrary, {"snprintf"}},
-       TR::Prop({{1, 2}, 3}, {{0, ReturnValueIndex}})},
+       TR::PropSink({{2}, 3}, {{0, ReturnValueIndex}}, {{1}}, MsgUntrustedSize)},
       // int sprintf(char * str, const char * format, ...);
       {{CDM::CLibrary, {"sprintf"}},
        TR::Prop({{1}, 2}, {{0, ReturnValueIndex}})},
@@ -805,6 +820,21 @@ void GenericTaintChecker::initTaintRules(CheckerContext &C) const {
       {{CDM::CLibrary, {"execvpe"}},
        TR::Sink({{0, 1, 2}}, MsgSanitizeSystemArgs)},
       {{CDM::CLibrary, {"dlopen"}}, TR::Sink({{0}}, MsgSanitizeSystemArgs)},
+
+
+      {{CDM::CLibraryMaybeHardened, {"wcscpy"}},
+       TR::Sink({{1}}, MsgUntrustedCopy)},
+      {{CDM::CLibraryMaybeHardened, {"strcpy"}},
+       TR::Sink({{1}}, MsgUntrustedCopy)},
+      {{CDM::CLibraryMaybeHardened, {"wcscat"}},
+      TR::Sink({{1}}, MsgUntrustedCopy)},
+
+      {{CDM::CLibraryMaybeHardened, {"strcat"}},
+       TR::Sink({{1}}, MsgUntrustedCopy)},
+      {{CDM::CLibraryMaybeHardened, {"strncpy"}},
+       TR::PropSink({{1}}, {{0, ReturnValueIndex}}, {{2}}, MsgUntrustedSize)},
+      {{CDM::CLibraryMaybeHardened, {"strcpy_s"}},
+      TR::PropSink({{2}}, {{0}}, {{1}}, MsgUntrustedSize)},
 
       // malloc, calloc, alloca, realloc, memccpy
       // are intentionally not marked as taint sinks because unconditional
