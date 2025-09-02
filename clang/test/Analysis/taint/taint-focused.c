@@ -8,6 +8,7 @@
 // RUN: -Wno-format-security -verify %s
 
 //void clang_analyzer_isTainted(char);
+void clang_analyzer_isTainted_ptr(void *);
 void clang_analyzer_isTainted(int);
 void clang_analyzer_isTainted_any_suffix(char);
 void clang_analyzer_isTainted_many_arguments(char, int, int);
@@ -416,10 +417,8 @@ int main(int argc, char * argv[]) {
   if (argc < 1)
     return 1;
   char cmd[2048] = "/bin/cat ";
-  char filename[1024];
   clang_analyzer_isTainted(*argv[0]); // expected-warning{{YES}}
-  strcpy(filename, argv[0]);// potential buffer overflow
-  strcat(cmd, filename);
+  strncat(cmd, argv[0], sizeof(cmd) - strlen(cmd)-1);
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
   return 0;
 }

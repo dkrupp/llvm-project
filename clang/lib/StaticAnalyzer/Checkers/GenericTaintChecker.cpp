@@ -416,10 +416,12 @@ private:
   CheckerManager &Mgr;
 };
 
-class GenericTaintChecker : public Checker<check::PreCall, check::PostCall> {
+class GenericTaintChecker : public Checker<check::PreCall, check::PostCall, check::BeginFunction> {
 public:
   void checkPreCall(const CallEvent &Call, CheckerContext &C) const;
   void checkPostCall(const CallEvent &Call, CheckerContext &C) const;
+  void checkBeginFunction(CheckerContext &C) const;
+
 
   // Make all escapign paramters tainted if at least one parameter is tainted
   void makeEscapingParamsTainted( const CallEvent &Call, CheckerContext &C) const;
@@ -885,8 +887,28 @@ void GenericTaintChecker::initTaintRules(CheckerContext &C) const {
                             std::make_move_iterator(Rules.end()));
 }
 
+
+void GenericTaintChecker::checkBeginFunction(CheckerContext &C) const {
+  if (!C.inTopFrame())
+    return;
+
+  const auto *FD = dyn_cast<FunctionDecl>(C.getLocationContext()->getDecl());
+  if (!FD || FD->param_size() < 2 || !FD->isMain())
+    return;
+
+  ProgramStateRef State = C.getState();
+  const MemRegion *ArgvReg =
+      State->getRegion(FD->parameters()[1], C.getLocationContext());
+  SVal ArgvSval = State->getSVal(ArgvReg);
+  // Add taintedness to argv**
+  State = addTaint(State, ArgvSval);
+  C.addTransition(State);
+}
+
+
 void GenericTaintChecker::checkPreCall(const CallEvent &Call,
                                        CheckerContext &C) const {
+
   initTaintRules(C);
 
   // FIXME: this should be much simpler.
