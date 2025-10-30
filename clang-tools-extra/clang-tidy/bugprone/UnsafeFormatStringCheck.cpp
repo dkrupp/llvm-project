@@ -9,6 +9,8 @@
 #include "UnsafeFormatStringCheck.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Lex/Lexer.h"
+#include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang::ast_matchers;
 
@@ -33,18 +35,22 @@ void UnsafeFormatStringCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
+  llvm::errs()<<"UnsafeFormatStringCheck::check";
   const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
   const auto *Format = Result.Nodes.getNodeAs<StringLiteral>("format");
-  
+
   if (!Call || !Format)
     return;
 
   std::string FormatString;
   if (Format->getCharByteWidth() == 1) {
     FormatString = Format->getString().str();
-  } else {
+  } else if (Format->getCharByteWidth() == 2) {
     // Handle wide strings by converting to narrow string for analysis
-    FormatString = Format->getBytes().str();
+    convertUTF16ToUTF8String(Format->getBytes(), FormatString);
+  } else if (Format->getCharByteWidth() == 4) {
+    // Handle wide strings by converting to narrow string for analysis
+    convertUTF32ToUTF8String(Format->getBytes(), FormatString);
   }
 
   if (!hasUnboundedStringSpecifier(FormatString))
@@ -71,24 +77,24 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
   while ((Pos = FormatString.find('%', Pos)) != StringRef::npos) {
     if (Pos + 1 >= FormatString.size())
       break;
-    
+
     // Skip %%
     if (FormatString[Pos + 1] == '%') {
       Pos += 2;
       continue;
     }
-    
+
     size_t SpecStart = Pos + 1;
     size_t SpecPos = SpecStart;
-    
+
     // Skip flags
-    while (SpecPos < FormatString.size() && 
+    while (SpecPos < FormatString.size() &&
            (FormatString[SpecPos] == '-' || FormatString[SpecPos] == '+' ||
             FormatString[SpecPos] == ' ' || FormatString[SpecPos] == '#' ||
             FormatString[SpecPos] == '0')) {
       SpecPos++;
     }
-    
+
     // Check for field width
     bool HasFieldWidth = false;
     if (SpecPos < FormatString.size() && FormatString[SpecPos] == '*') {
@@ -100,7 +106,7 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
         SpecPos++;
       }
     }
-    
+
     // Skip precision
     if (SpecPos < FormatString.size() && FormatString[SpecPos] == '.') {
       SpecPos++;
@@ -112,23 +118,23 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
         }
       }
     }
-    
+
     // Skip length modifiers
-    while (SpecPos < FormatString.size() && 
+    while (SpecPos < FormatString.size() &&
            (FormatString[SpecPos] == 'h' || FormatString[SpecPos] == 'l' ||
             FormatString[SpecPos] == 'L' || FormatString[SpecPos] == 'z' ||
             FormatString[SpecPos] == 'j' || FormatString[SpecPos] == 't')) {
       SpecPos++;
     }
-    
+
     // Check for 's' specifier without field width
     if (SpecPos < FormatString.size() && FormatString[SpecPos] == 's' && !HasFieldWidth) {
       return true;
     }
-    
+
     Pos = SpecPos + 1;
   }
-  
+
   return false;
 }
 
