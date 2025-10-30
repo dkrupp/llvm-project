@@ -35,7 +35,6 @@ void UnsafeFormatStringCheck::registerMatchers(MatchFinder *Finder) {
 }
 
 void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
-  llvm::errs()<<"UnsafeFormatStringCheck::check";
   const auto *Call = Result.Nodes.getNodeAs<CallExpr>("call");
   const auto *Format = Result.Nodes.getNodeAs<StringLiteral>("format");
 
@@ -53,15 +52,18 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
     convertUTF32ToUTF8String(Format->getBytes(), FormatString);
   }
 
-  if (!hasUnboundedStringSpecifier(FormatString))
-    return;
-
   const auto *Callee = cast<FunctionDecl>(Call->getCalleeDecl());
   StringRef FunctionName = Callee->getName();
+  
+  bool IsScanfFamily = FunctionName.contains("scanf");
+  
+  if (!hasUnboundedStringSpecifier(FormatString, IsScanfFamily))
+    return;
 
   auto Diag = diag(Call->getBeginLoc(),
-                   "format specifier '%%s' without field width may cause "
-                   "buffer overflow")
+                   IsScanfFamily 
+                     ? "format specifier '%%s' without field width may cause buffer overflow; consider using '%%Ns' where N limits input length"
+                     : "format specifier '%%s' without precision may cause buffer overflow; consider using '%%.Ns' where N limits output length")
               << Call->getSourceRange();
 
   std::string SafeAlternative = getSafeAlternative(FunctionName);
@@ -72,7 +74,7 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 
-bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString) {
+bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString, bool IsScanfFamily) {
   size_t Pos = 0;
   while ((Pos = FormatString.find('%', Pos)) != StringRef::npos) {
     if (Pos + 1 >= FormatString.size())
@@ -84,8 +86,7 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
       continue;
     }
 
-    size_t SpecStart = Pos + 1;
-    size_t SpecPos = SpecStart;
+    size_t SpecPos = Pos + 1;
 
     // Skip flags
     while (SpecPos < FormatString.size() &&
@@ -107,13 +108,16 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
       }
     }
 
-    // Skip precision
+    // Check for precision
+    bool HasPrecision = false;
     if (SpecPos < FormatString.size() && FormatString[SpecPos] == '.') {
       SpecPos++;
       if (SpecPos < FormatString.size() && FormatString[SpecPos] == '*') {
+        HasPrecision = true;
         SpecPos++;
       } else {
         while (SpecPos < FormatString.size() && isdigit(FormatString[SpecPos])) {
+          HasPrecision = true;
           SpecPos++;
         }
       }
@@ -127,9 +131,19 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
       SpecPos++;
     }
 
-    // Check for 's' specifier without field width
-    if (SpecPos < FormatString.size() && FormatString[SpecPos] == 's' && !HasFieldWidth) {
-      return true;
+    // Check for 's' specifier
+    if (SpecPos < FormatString.size() && FormatString[SpecPos] == 's') {
+      if (IsScanfFamily) {
+        // For scanf family, field width provides protection
+        if (!HasFieldWidth) {
+          return true;
+        }
+      } else {
+        // For sprintf family, only precision provides protection
+        if (!HasPrecision) {
+          return true;
+        }
+      }
     }
 
     Pos = SpecPos + 1;

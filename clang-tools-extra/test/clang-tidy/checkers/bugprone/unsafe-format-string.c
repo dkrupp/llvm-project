@@ -10,10 +10,18 @@ void test_sprintf() {
   
   /* Positive: unsafe %s without field width */
   sprintf(buffer, "%s", input);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
   
-  /* Negative: safe %s with field width */
+  /* Positive: field width doesn't prevent overflow in sprintf */
   sprintf(buffer, "%99s", input);
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
+  
+  /* Negative: precision limits string length */
+  sprintf(buffer, "%.99s", input);
+  /* no-warning */
+  
+  /* Negative: precision with field width */
+  sprintf(buffer, "%1.99s", input);
   /* no-warning */
   
   /* Negative: other format specifiers are safe */
@@ -27,10 +35,14 @@ void test_vsprintf() {
   
   /* Positive: unsafe %s without field width */
   vsprintf(buffer, "%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
   
-  /* Negative: safe %s with field width */
+  /* Positive: field width doesn't prevent overflow in vsprintf */
   vsprintf(buffer, "%99s", args);
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
+  
+  /* Negative: precision limits string length */
+  vsprintf(buffer, "%.99s", args);
   /* no-warning */
 }
 
@@ -51,7 +63,7 @@ void test_scanf() {
   
   /* Positive: unsafe %s without field width */
   scanf("%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   scanf("%99s", buffer);
@@ -64,7 +76,7 @@ void test_fscanf() {
   
   /* Positive: unsafe %s without field width */
   fscanf(file, "%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   fscanf(file, "%99s", buffer);
@@ -77,7 +89,7 @@ void test_sscanf() {
   
   /* Positive: unsafe %s without field width */
   sscanf(source, "%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   sscanf(source, "%99s", buffer);
@@ -90,7 +102,7 @@ void test_vfscanf() {
   
   /* Positive: unsafe %s without field width */
   vfscanf(file, "%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vfscanf(file, "%99s", args);
@@ -103,7 +115,7 @@ void test_vsscanf() {
   
   /* Positive: unsafe %s without field width */
   vsscanf(source, "%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vsscanf(source, "%99s", args);
@@ -115,7 +127,7 @@ void test_vscanf() {
   
   /* Positive: unsafe %s without field width */
   vscanf("%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vscanf("%99s", args);
@@ -127,7 +139,7 @@ void test_wscanf() {
   
   /* Positive: unsafe %s without field width */
   wscanf(L"%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   wscanf(L"%99s", buffer);
@@ -140,7 +152,7 @@ void test_fwscanf() {
   
   /* Positive: unsafe %s without field width */
   fwscanf(file, L"%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   fwscanf(file, L"%99s", buffer);
@@ -153,7 +165,7 @@ void test_swscanf() {
   
   /* Positive: unsafe %s without field width */
   swscanf(source, L"%s", buffer);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   swscanf(source, L"%99s", buffer);
@@ -165,7 +177,7 @@ void test_vwscanf() {
   
   /* Positive: unsafe %s without field width */
   vwscanf(L"%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vwscanf(L"%99s", args);
@@ -178,7 +190,7 @@ void test_vfwscanf() {
   
   /* Positive: unsafe %s without field width */
   vfwscanf(file, L"%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vfwscanf(file, L"%99s", args);
@@ -191,7 +203,7 @@ void test_vswscanf() {
   
   /* Positive: unsafe %s without field width */
   vswscanf(source, L"%s", args);
-  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow; consider using '%Ns' where N limits input length [bugprone-unsafe-format-string]
   
   /* Negative: safe %s with field width */
   vswscanf(source, L"%99s", args);
