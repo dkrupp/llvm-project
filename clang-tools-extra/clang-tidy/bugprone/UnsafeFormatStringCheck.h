@@ -23,13 +23,10 @@ public:
   UnsafeFormatStringCheck(StringRef Name, ClangTidyContext *Context);
   void registerMatchers(ast_matchers::MatchFinder *Finder) override;
   void check(const ast_matchers::MatchFinder::MatchResult &Result) override;
-  void storeOptions(ClangTidyOptions::OptionMap &Opts) override;
 
 private:
   bool hasUnboundedStringSpecifier(StringRef FormatString);
   std::string getSafeAlternative(StringRef FunctionName);
-  
-  bool SuggestAlternatives;
 };
 
 } // namespace clang::tidy::bugprone

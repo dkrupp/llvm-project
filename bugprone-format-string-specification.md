@@ -55,9 +55,6 @@ warning: format specifier '%s' without field width may cause buffer overflow [bu
 - Suggest field width for `%s` specifiers
 - Provide buffer size calculation when possible
 
-## Configuration Options
-- `SuggestAlternatives`: Enable fix-it suggestions (default: true)
-
 ## Implementation Notes
 - Handle both string literals and const char* format parameters
 - Support variadic and va_list variants

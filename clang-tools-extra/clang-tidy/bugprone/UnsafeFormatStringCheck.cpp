@@ -16,8 +16,7 @@ namespace clang::tidy::bugprone {
 
 UnsafeFormatStringCheck::UnsafeFormatStringCheck(StringRef Name,
                                                  ClangTidyContext *Context)
-    : ClangTidyCheck(Name, Context),
-      SuggestAlternatives(Options.get("SuggestAlternatives", true)) {}
+    : ClangTidyCheck(Name, Context) {}
 
 void UnsafeFormatStringCheck::registerMatchers(MatchFinder *Finder) {
   // Match vulnerable format string functions
@@ -52,18 +51,13 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
                    "buffer overflow")
               << Call->getSourceRange();
 
-  if (SuggestAlternatives) {
-    std::string SafeAlternative = getSafeAlternative(FunctionName);
-    if (!SafeAlternative.empty()) {
-      Diag << FixItHint::CreateInsertion(Call->getBeginLoc(),
-                                         "/* Consider using " + SafeAlternative + " */ ");
-    }
+  std::string SafeAlternative = getSafeAlternative(FunctionName);
+  if (!SafeAlternative.empty()) {
+    Diag << FixItHint::CreateInsertion(Call->getBeginLoc(),
+                                       "/* Consider using " + SafeAlternative + " */ ");
   }
 }
 
-void UnsafeFormatStringCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
-  Options.store(Opts, "SuggestAlternatives", SuggestAlternatives);
-}
 
 bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString) {
   size_t Pos = 0;
