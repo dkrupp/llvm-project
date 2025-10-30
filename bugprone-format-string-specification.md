@@ -56,7 +56,6 @@ warning: format specifier '%s' without field width may cause buffer overflow [bu
 - Provide buffer size calculation when possible
 
 ## Configuration Options
-- `MaxFieldWidth`: Maximum reasonable field width (default: 4096)
 - `SuggestAlternatives`: Enable fix-it suggestions (default: true)
 
 ## Implementation Notes

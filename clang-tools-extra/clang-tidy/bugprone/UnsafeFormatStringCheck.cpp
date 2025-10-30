@@ -17,7 +17,6 @@ namespace clang::tidy::bugprone {
 UnsafeFormatStringCheck::UnsafeFormatStringCheck(StringRef Name,
                                                  ClangTidyContext *Context)
     : ClangTidyCheck(Name, Context),
-      MaxFieldWidth(Options.get("MaxFieldWidth", 4096U)),
       SuggestAlternatives(Options.get("SuggestAlternatives", true)) {}
 
 void UnsafeFormatStringCheck::registerMatchers(MatchFinder *Finder) {
@@ -63,7 +62,6 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
 }
 
 void UnsafeFormatStringCheck::storeOptions(ClangTidyOptions::OptionMap &Opts) {
-  Options.store(Opts, "MaxFieldWidth", MaxFieldWidth);
   Options.store(Opts, "SuggestAlternatives", SuggestAlternatives);
 }
 

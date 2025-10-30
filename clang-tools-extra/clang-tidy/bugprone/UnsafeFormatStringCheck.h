@@ -29,7 +29,6 @@ private:
   bool hasUnboundedStringSpecifier(StringRef FormatString);
   std::string getSafeAlternative(StringRef FunctionName);
   
-  unsigned MaxFieldWidth;
   bool SuggestAlternatives;
 };
 
