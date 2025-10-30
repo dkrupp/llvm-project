@@ -28,6 +28,10 @@ void test_vsprintf() {
   /* Positive: unsafe %s without field width */
   vsprintf(buffer, "%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vsprintf(buffer, "%99s", args);
+  /* no-warning */
 }
 
 void test_vsprintf_safe_wrapper(const char* format, ...) {
@@ -87,6 +91,10 @@ void test_vfscanf() {
   /* Positive: unsafe %s without field width */
   vfscanf(file, "%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vfscanf(file, "%99s", args);
+  /* no-warning */
 }
 
 void test_vsscanf() {
@@ -96,6 +104,10 @@ void test_vsscanf() {
   /* Positive: unsafe %s without field width */
   vsscanf(source, "%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vsscanf(source, "%99s", args);
+  /* no-warning */
 }
 
 void test_vscanf() {
@@ -104,6 +116,10 @@ void test_vscanf() {
   /* Positive: unsafe %s without field width */
   vscanf("%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vscanf("%99s", args);
+  /* no-warning */
 }
 
 void test_wscanf() {
@@ -150,6 +166,10 @@ void test_vwscanf() {
   /* Positive: unsafe %s without field width */
   vwscanf(L"%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vwscanf(L"%99s", args);
+  /* no-warning */
 }
 
 void test_vfwscanf() {
@@ -159,6 +179,10 @@ void test_vfwscanf() {
   /* Positive: unsafe %s without field width */
   vfwscanf(file, L"%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vfwscanf(file, L"%99s", args);
+  /* no-warning */
 }
 
 void test_vswscanf() {
@@ -168,6 +192,10 @@ void test_vswscanf() {
   /* Positive: unsafe %s without field width */
   vswscanf(source, L"%s", args);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without field width may cause buffer overflow [bugprone-unsafe-format-string]
+  
+  /* Negative: safe %s with field width */
+  vswscanf(source, L"%99s", args);
+  /* no-warning */
 }
 
 void test_safe_alternatives() {
