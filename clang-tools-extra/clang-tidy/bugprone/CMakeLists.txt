@@ -101,6 +101,7 @@ add_clang_library(clangTidyBugproneModule STATIC
   UnhandledSelfAssignmentCheck.cpp
   UniquePtrArrayMismatchCheck.cpp
   UnsafeFunctionsCheck.cpp
+  UnsafeFormatStringCheck.cpp
   UnusedLocalNonTrivialVariableCheck.cpp
   UnusedRaiiCheck.cpp
   UnusedReturnValueCheck.cpp
