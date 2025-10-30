@@ -39,7 +39,14 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
   if (!Call || !Format)
     return;
 
-  StringRef FormatString = Format->getString();
+  std::string FormatString;
+  if (Format->getCharByteWidth() == 1) {
+    FormatString = Format->getString().str();
+  } else {
+    // Handle wide strings by converting to narrow string for analysis
+    FormatString = Format->getBytes().str();
+  }
+
   if (!hasUnboundedStringSpecifier(FormatString))
     return;
 
