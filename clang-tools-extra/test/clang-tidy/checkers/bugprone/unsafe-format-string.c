@@ -16,12 +16,32 @@ void test_sprintf() {
   sprintf(buffer, "%99s", input);
   // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
   
+  /* Positive: dynamic field width doesn't prevent overflow */
+  sprintf(buffer, "%*s", 10, input);
+  // CHECK-MESSAGES: :[[@LINE-1]]:3: warning: format specifier '%s' without precision may cause buffer overflow; consider using '%.Ns' where N limits output length [bugprone-unsafe-format-string]
+  
   /* Negative: precision limits string length */
   sprintf(buffer, "%.99s", input);
   /* no-warning */
   
   /* Negative: precision with field width */
   sprintf(buffer, "%1.99s", input);
+  /* no-warning */
+  
+  /* Negative: dynamic precision */
+  sprintf(buffer, "%.*s", 99, input);
+  /* no-warning */
+  
+  /* Negative: field width with dynamic precision */
+  sprintf(buffer, "%1.*s", 99, input);
+  /* no-warning */
+  
+  /* Negative: dynamic field width with fixed precision */
+  sprintf(buffer, "%*.99s", 10, input);
+  /* no-warning */
+  
+  /* Negative: dynamic field width and precision */
+  sprintf(buffer, "%*.*s", 10, 99, input);
   /* no-warning */
   
   /* Negative: other format specifiers are safe */
