@@ -8,9 +8,7 @@
 
 #include "UnsafeFormatStringCheck.h"
 #include "clang/ASTMatchers/ASTMatchFinder.h"
-#include "clang/Lex/Lexer.h"
 #include "llvm/Support/ConvertUTF.h"
-#include "llvm/Support/raw_ostream.h"
 
 using namespace clang::ast_matchers;
 
@@ -21,13 +19,16 @@ UnsafeFormatStringCheck::UnsafeFormatStringCheck(StringRef Name,
     : ClangTidyCheck(Name, Context) {}
 
 void UnsafeFormatStringCheck::registerMatchers(MatchFinder *Finder) {
-  // Match vulnerable format string functions
-  auto VulnerableFunctions = hasAnyName(
-      "sprintf", "vsprintf", "scanf", "fscanf", "sscanf", "vscanf", "vfscanf",
-      "vsscanf", "wscanf", "fwscanf", "swscanf", "vwscanf", "vfwscanf", "vswscanf");
-
+  // Matches sprintf and scanf family functions in std namespace in C++ and
+  // globally in C.
+  auto VulnerableFunctions =
+      hasAnyName("sprintf", "vsprintf", "scanf", "fscanf", "sscanf", "vscanf",
+                 "vfscanf", "vsscanf", "wscanf", "fwscanf", "swscanf",
+                 "vwscanf", "vfwscanf", "vswscanf");
   Finder->addMatcher(
-      callExpr(callee(functionDecl(VulnerableFunctions)),
+      callExpr(callee(functionDecl(VulnerableFunctions,
+                                   anyOf(isInStdNamespace(),
+                                         hasParent(translationUnitDecl())))),
                anyOf(hasArgument(0, stringLiteral().bind("format")),
                      hasArgument(1, stringLiteral().bind("format"))))
           .bind("call"),
@@ -54,34 +55,29 @@ void UnsafeFormatStringCheck::check(const MatchFinder::MatchResult &Result) {
 
   const auto *Callee = cast<FunctionDecl>(Call->getCalleeDecl());
   StringRef FunctionName = Callee->getName();
-  
+
   bool IsScanfFamily = FunctionName.contains("scanf");
-  
+
   if (!hasUnboundedStringSpecifier(FormatString, IsScanfFamily))
     return;
 
   auto Diag = diag(Call->getBeginLoc(),
-                   IsScanfFamily 
+                   IsScanfFamily
                      ? "format specifier '%%s' without field width may cause buffer overflow; consider using '%%Ns' where N limits input length"
                      : "format specifier '%%s' without precision may cause buffer overflow; consider using '%%.Ns' where N limits output length")
               << Call->getSourceRange();
-
-  std::string SafeAlternative = getSafeAlternative(FunctionName);
-  if (!SafeAlternative.empty()) {
-    Diag << FixItHint::CreateInsertion(Call->getBeginLoc(),
-                                       "/* Consider using " + SafeAlternative + " */ ");
-  }
 }
 
-
-bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString, bool IsScanfFamily) {
+bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef Fmt,
+                                                          bool IsScanfFamily) {
   size_t Pos = 0;
-  while ((Pos = FormatString.find('%', Pos)) != StringRef::npos) {
-    if (Pos + 1 >= FormatString.size())
+  size_t N = Fmt.size();
+  while ((Pos = Fmt.find('%', Pos)) != StringRef::npos) {
+    if (Pos + 1 >= N)
       break;
 
     // Skip %%
-    if (FormatString[Pos + 1] == '%') {
+    if (Fmt[Pos + 1] == '%') {
       Pos += 2;
       continue;
     }
@@ -89,20 +85,19 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
     size_t SpecPos = Pos + 1;
 
     // Skip flags
-    while (SpecPos < FormatString.size() &&
-           (FormatString[SpecPos] == '-' || FormatString[SpecPos] == '+' ||
-            FormatString[SpecPos] == ' ' || FormatString[SpecPos] == '#' ||
-            FormatString[SpecPos] == '0')) {
+    while (SpecPos < N &&
+           (Fmt[SpecPos] == '-' || Fmt[SpecPos] == '+' || Fmt[SpecPos] == ' ' ||
+            Fmt[SpecPos] == '#' || Fmt[SpecPos] == '0')) {
       SpecPos++;
     }
 
     // Check for field width
     bool HasFieldWidth = false;
-    if (SpecPos < FormatString.size() && FormatString[SpecPos] == '*') {
+    if (SpecPos < N && Fmt[SpecPos] == '*') {
       HasFieldWidth = true;
       SpecPos++;
     } else {
-      while (SpecPos < FormatString.size() && isdigit(FormatString[SpecPos])) {
+      while (SpecPos < N && isdigit(Fmt[SpecPos])) {
         HasFieldWidth = true;
         SpecPos++;
       }
@@ -110,13 +105,13 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
 
     // Check for precision
     bool HasPrecision = false;
-    if (SpecPos < FormatString.size() && FormatString[SpecPos] == '.') {
+    if (SpecPos < N && Fmt[SpecPos] == '.') {
       SpecPos++;
-      if (SpecPos < FormatString.size() && FormatString[SpecPos] == '*') {
+      if (SpecPos < N && Fmt[SpecPos] == '*') {
         HasPrecision = true;
         SpecPos++;
       } else {
-        while (SpecPos < FormatString.size() && isdigit(FormatString[SpecPos])) {
+        while (SpecPos < N && isdigit(Fmt[SpecPos])) {
           HasPrecision = true;
           SpecPos++;
         }
@@ -124,15 +119,14 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
     }
 
     // Skip length modifiers
-    while (SpecPos < FormatString.size() &&
-           (FormatString[SpecPos] == 'h' || FormatString[SpecPos] == 'l' ||
-            FormatString[SpecPos] == 'L' || FormatString[SpecPos] == 'z' ||
-            FormatString[SpecPos] == 'j' || FormatString[SpecPos] == 't')) {
+    while (SpecPos < N && (Fmt[SpecPos] == 'h' || Fmt[SpecPos] == 'l' ||
+                           Fmt[SpecPos] == 'L' || Fmt[SpecPos] == 'z' ||
+                           Fmt[SpecPos] == 'j' || Fmt[SpecPos] == 't')) {
       SpecPos++;
     }
 
     // Check for 's' specifier
-    if (SpecPos < FormatString.size() && FormatString[SpecPos] == 's') {
+    if (SpecPos < N && Fmt[SpecPos] == 's') {
       if (IsScanfFamily) {
         // For scanf family, field width provides protection
         if (!HasFieldWidth) {
@@ -150,16 +144,6 @@ bool UnsafeFormatStringCheck::hasUnboundedStringSpecifier(StringRef FormatString
   }
 
   return false;
-}
-
-std::string UnsafeFormatStringCheck::getSafeAlternative(StringRef FunctionName) {
-  if (FunctionName == "sprintf")
-    return "snprintf";
-  if (FunctionName == "vsprintf")
-    return "vsnprintf";
-  if (FunctionName.starts_with("scanf") || FunctionName.ends_with("scanf"))
-    return "add field width to %s specifiers";
-  return "";
 }
 
 } // namespace clang::tidy::bugprone

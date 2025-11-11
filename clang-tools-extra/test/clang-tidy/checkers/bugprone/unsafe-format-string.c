@@ -1,8 +1,35 @@
 // RUN: %check_clang_tidy %s bugprone-unsafe-format-string %t
 
-#include <stdio.h>
-#include <wchar.h>
 #include <stdarg.h>
+
+typedef __SIZE_TYPE__  size_t;
+typedef __WCHAR_TYPE__ wchar_t;
+typedef void *FILE;
+extern FILE *stdin;
+extern FILE *stderr;
+
+extern int fscanf ( FILE * stream, const char * format, ... );
+extern int scanf ( const char * format, ... );
+extern int sscanf ( const char * s, const char * format, ...);
+extern int vscanf( const char *restrict format, va_list vlist );
+extern int vfscanf ( FILE * stream, const char * format, va_list arg );
+
+extern int vsscanf( const char *restrict buffer, const char *restrict format, va_list vlist );
+extern int vwscanf( const wchar_t* format, va_list vlist );
+extern int vfwscanf( FILE* stream, const wchar_t* format, va_list vlist );
+extern int vswscanf( const wchar_t* buffer, const wchar_t* format, va_list vlist );
+extern int swscanf (const wchar_t* ws, const wchar_t* format, ...);
+extern int wscanf( const wchar_t *format, ... );
+extern int fwscanf( FILE *stream, const wchar_t *format, ... );
+
+extern int printf( const char*          format, ... );
+extern int sprintf( char* buffer, const char* format, ... );
+extern int vsprintf (char * s, const char * format, va_list arg );
+extern int vsnprintf (char * s, size_t n, const char * format, va_list arg );
+extern int fprintf( FILE*          stream, const char*          format, ... );
+extern int snprintf( char* restrict buffer, size_t bufsz,
+              const char* restrict format, ... );
+
 
 void test_sprintf() {
   char buffer[100];
