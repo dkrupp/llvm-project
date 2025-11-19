@@ -1,8 +1,6 @@
-// RUN: %check_clang_tidy %s bugprone-unsafe-format-string %t
+// RUN: %check_clang_tidy %s bugprone-unsafe-format-string %t -- -- -isystem %S/Inputs/unsafe-format-string
 
-namespace std {
-  int sprintf( char* buffer, const char* format, ... );
-}
+#include <system-header-simulator.h>
 
 class TestClass{
   int sprintf( char* buffer, const char* format, ... );
