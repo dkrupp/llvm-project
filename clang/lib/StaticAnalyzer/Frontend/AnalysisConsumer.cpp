@@ -495,7 +495,7 @@ AnalysisConsumer::getInliningModeForFunction(const Decl *D,
 bool AnalysisConsumer::isTaintSource(const FunctionDecl* FD){
   std::set<std::string> sources = {"scanf","gets","getch","read","fopen","fdopen","freopen","getchar",
   "gets_s","scanf_s","getcwd","readlink","gethostname","getnameinfo","readlinkat","get_current_dir_name",
-  "getseuserbyname","getgroups","getlogin","getlogin_r","popen","getenv"};
+  "getseuserbyname","getgroups","getlogin","getlogin_r","popen","getenv","main"};
   if (!FD || !FD->getCanonicalDecl())
     return false;
   std::string FN = FD->getCanonicalDecl()->getNameAsString();
@@ -504,7 +504,10 @@ bool AnalysisConsumer::isTaintSource(const FunctionDecl* FD){
 }
 
 bool AnalysisConsumer::isTaintSink(const FunctionDecl* FD){
-  std::set<std::string> sinks = {"system", "execv","popen","malloc","calloc","memcpy","strcpy","strncpy"};
+  std::set<std::string> sinks = {
+    "system", "execv","popen","malloc","calloc","memcpy","strcpy","strncpy",
+    "strlcpy", "snprintf", "vsnprintf","strncat","strlcat","wsncpy","wsncpy_s",
+    "wcscat_s", "wcsncat" };
   if (!FD || !FD->getCanonicalDecl())
     return false;
   std::string FN = FD->getCanonicalDecl()->getNameAsString();
@@ -625,8 +628,8 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
     bool MustAnalyze=false;
     if (Opts.AnalyzerFocusedTaint){
       auto *FD = dyn_cast<FunctionDecl>(D);
-      MustAnalyze = TaintedTopLevelFunctions.find(FD)!=TaintedTopLevelFunctions.end();
-      llvm::errs() << "Function: " << FD->getNameInfo().getAsString() << "MustAnalyze: "<<MustAnalyze<<"\n";
+      MustAnalyze = TaintedTopLevelFunctions.find(FD)!=TaintedTopLevelFunctions.end();      
+      llvm::errs() << "Function: " << FD->getNameInfo().getAsString() << " MustAnalyze: "<<MustAnalyze<<"\n";
     }
 
     // Skip the functions which have been processed already or previously
@@ -651,7 +654,9 @@ void AnalysisConsumer::HandleDeclsCallGraph(const unsigned LocalTUDeclsSize) {
     if (Opts.AnalyzerFocusedTaint) {
       // if the function is not taint related skip it.
       auto *FD = dyn_cast<FunctionDecl>(D);
-      if (TaintedTopLevelFunctions.find(FD) == TaintedTopLevelFunctions.end()) {
+      //The argv of main is a taint source, so we must always analyze function main      
+      if ((FD->getNameInfo().getAsString() != "main") 
+          && TaintedTopLevelFunctions.find(FD) == TaintedTopLevelFunctions.end()) {
         llvm::errs()
             << "Skipping not taint related function from the analysis:\n";
         llvm::errs() << FD->getNameInfo().getAsString() << "\n";
