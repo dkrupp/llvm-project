@@ -51,6 +51,12 @@ namespace {
 
 class GenericTaintChecker;
 
+enum class TaintPropagationModeTy {
+    forget = 0,
+    keep = 1,
+    spread =2    
+  };
+
 /// Check for CWE-134: Uncontrolled Format String.
 constexpr llvm::StringLiteral MsgUncontrolledFormatString =
     "Untrusted data is used as a format string "
@@ -80,6 +86,7 @@ using ArgVecTy = llvm::SmallVector<ArgIdxTy, 2>;
 
 /// Denotes the return value.
 constexpr ArgIdxTy ReturnValueIndex{-1};
+
 
 static ArgIdxTy fromArgumentCount(unsigned Count) {
   assert(Count <=
@@ -433,8 +440,8 @@ public:
   bool generateReportIfTainted(const Expr *E, StringRef Msg,
                                CheckerContext &C) const;
 
-  bool isTaintReporterCheckerEnabled = false;
-  bool AggressiveTaintPropagation = false;
+  bool isTaintReporterCheckerEnabled = false;   
+  TaintPropagationModeTy TaintPropagationMode = TaintPropagationModeTy::forget;
   std::optional<BugType> BT;
 
 private:
@@ -917,7 +924,9 @@ void GenericTaintChecker::checkPreCall(const CallEvent &Call,
     Rule->process(*this, Call, C);
   else if (const auto *Rule = DynamicTaintRules->lookup(Call))
     Rule->process(*this, Call, C);
-  else if (this->AggressiveTaintPropagation)
+  else if (this->TaintPropagationMode==TaintPropagationModeTy::spread || 
+    this->TaintPropagationMode==TaintPropagationModeTy::keep
+  )
     makeEscapingParamsTainted(Call, C);
   // FIXME: These edge cases are to be eliminated from here eventually.
   //
@@ -1086,13 +1095,13 @@ void GenericTaintChecker::makeEscapingParamsTainted(
     return IsNonConstRef || IsNonConstPtr;
   };
 
-  bool HasTaintedParam = false;
+  bool HasTaintedParam = false;  
 
   ForEachCallArg(
       [this, &C, &HasTaintedParam, &State](ArgIdxTy I, const Expr *E, SVal) {
         std::optional<SVal> TaintedSVal =
-            getTaintedPointeeOrPointer(State, C.getSVal(E));
-        HasTaintedParam = HasTaintedParam || TaintedSVal.has_value();
+            getTaintedPointeeOrPointer(State, C.getSVal(E));        
+        HasTaintedParam |= TaintedSVal.has_value();
       });
   llvm::errs() << "PreCall<";
         Call.dump(llvm::errs());
@@ -1106,13 +1115,26 @@ void GenericTaintChecker::makeEscapingParamsTainted(
     // not inlined. If there is at least one tainted parameter
     // we make all escaping parameter tainted, even the return value.
 
-    if ((WouldEscape(V, E->getType())||I==ReturnValueIndex) && this->AggressiveTaintPropagation &&
+    if ((WouldEscape(V, E->getType())||I==ReturnValueIndex) && this->TaintPropagationMode==TaintPropagationModeTy::spread &&
         HasTaintedParam) {
       if (!Result.contains(I)) {
         llvm::errs() << "PreCall<";
         Call.dump(llvm::errs());
-        //llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
-        //             << I << '\n';
+        llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
+                     << I << '\n';
+        Result = F.add(Result, I);
+      }
+    }
+
+    if (getTaintedPointeeOrPointer(State, C.getSVal(E)).has_value())
+      llvm::errs() << "PreCall. parameter " <<I<<"is tainted";
+    if ((WouldEscape(V, E->getType())&& I!=ReturnValueIndex) && this->TaintPropagationMode==TaintPropagationModeTy::keep
+            && getTaintedPointeeOrPointer(State, C.getSVal(E)).has_value()) {      
+      if (!Result.contains(I)) {
+        llvm::errs() << "PreCall<";
+        Call.dump(llvm::errs());
+        llvm::errs() << "> KEEPING taintedness so ESCAPING tainting arg index: "
+                     << I << '\n';
         Result = F.add(Result, I);
       }
     }
@@ -1354,9 +1376,15 @@ void GenericTaintChecker::taintUnsafeSocketProtocol(const CallEvent &Call,
 void ento::registerTaintPropagationChecker(CheckerManager &Mgr) {
   Mgr.registerChecker<GenericTaintChecker>();
   GenericTaintChecker *checker = Mgr.getChecker<GenericTaintChecker>();
-  checker->AggressiveTaintPropagation =
-      Mgr.getAnalyzerOptions().getCheckerBooleanOption(checker,
-                                                  "AggressiveTaintPropagation");
+
+  StringRef TaintPropagationMode = Mgr.getAnalyzerOptions().getCheckerStringOption(
+      checker, "TaintPropagationMode");
+  if (TaintPropagationMode == "forget")
+    checker->TaintPropagationMode = TaintPropagationModeTy::forget;
+  else if (TaintPropagationMode == "keep")
+    checker->TaintPropagationMode = TaintPropagationModeTy::keep;
+  else
+    checker->TaintPropagationMode = TaintPropagationModeTy::spread;
 }
 
 bool ento::shouldRegisterTaintPropagationChecker(const CheckerManager &mgr) {

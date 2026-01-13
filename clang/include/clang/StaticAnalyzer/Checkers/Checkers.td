@@ -1639,7 +1639,6 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
                   "Specifies the name of the configuration file.",
                   "",
                   Released>,
-
     CmdLineOption<Boolean,
                   "EnableDefaultConfig",
                   "If set to false, the default source, "
@@ -1655,12 +1654,14 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
 def GenericTaintChecker : Checker<"GenericTaint">,
   HelpText<"Reports potential injection vulnerabilities">,
   CheckerOptions<[
-    CmdLineOption<Boolean,
-                  "AggressiveTaintPropagation",
-                  "If set to true and if a called function cannot be inlined, "
-                  "taintedness will be propagated to the return value and to non-const "
-                  "reference parameters",
-                  "false",
+    CmdLineOption<String,
+                  "TaintPropagationMode",
+                  "If set to forget, the writeable parameters and the return value of non-inlineable functions"
+                  " lose the taintedness property."
+                  "If set to keep,  the writeable parameters of non-inlineable functions keep taintedness."
+                  "If set to spread, the writeable parameters of non-inlineable functions keep taintedness "
+                  "and the taintedness is spread to the return value and all writeable parameters.",
+                  "forget",
                   Released>
 
   ]>,

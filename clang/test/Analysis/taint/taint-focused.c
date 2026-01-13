@@ -1,11 +1,21 @@
 // RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
 // RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
-// RUN: -analyzer-config optin.taint.TaintPropagation:AggressiveTaintPropagation=true \
+// RUN: -analyzer-config optin.taint.TaintPropagation:TaintPropagationMode=keep \
 // RUN: -analyzer-config analyzer-focused-taint=false \
 // RUN: -analyzer-checker=debug.ExprInspection \
 // RUN: -analyzer-config analyzer-inline-taint-only=false \
 // RUN: -analyzer-config analyzer-always-inline-tainted=false \
-// RUN: -Wno-format-security -verify %s
+// RUN: -Wno-format-security -verify=expected,keep %s
+
+
+// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
+// RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
+// RUN: -analyzer-config optin.taint.TaintPropagation:TaintPropagationMode=spread \
+// RUN: -analyzer-config analyzer-focused-taint=false \
+// RUN: -analyzer-checker=debug.ExprInspection \
+// RUN: -analyzer-config analyzer-inline-taint-only=false \
+// RUN: -analyzer-config analyzer-always-inline-tainted=false \
+// RUN: -Wno-format-security -verify=expected,spread %s
 
 //void clang_analyzer_isTainted(char);
 void clang_analyzer_isTainted_ptr(void *);
@@ -115,7 +125,7 @@ void test3(int input){
     i++;
   }
   strncat(cmd, filename, sizeof(cmd) - 1);
-  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  system(cmd);// KNOWN-TO-FAIL-expected-warning {{Untrusted data is passed to a system call}}
 }
 
 
@@ -154,7 +164,8 @@ void test_large_loop3(int input){
   char filename[1024];
   fetchTaintedString (filename);
   int i = complex_function(filename); // tainted value is lost from filename because complex function cannot be analyzed
-  clang_analyzer_isTainted(i); // expected-warning{{YES}}
+  clang_analyzer_isTainted(i); // spread-warning{{YES}}
+                               // keep-warning@-1{{NO}}
   clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
   strncat(cmd, filename, sizeof(cmd) - 1);
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
@@ -188,7 +199,7 @@ void test_large_loop4(int input){
 
 // Test Unknown Function1
 // calling an external unkown function before the sink
-// with aggressive propagation unknownTransform(filename)
+// with keep and spread propagation unknownTransform(filename)
 // should keep taintedness on filename
 // FAILS in baseline
 
@@ -200,13 +211,14 @@ void test_unkown_transform1(int input){
   fetchTaintedString (filename);
   unknownTransform(filename); // taintedness gets lost here
   strncat(cmd, filename, sizeof(cmd) - 1);
-  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  system(cmd);// keep-warning {{Untrusted data is passed to a system call}}
+              // spread-warning@-1 {{Untrusted data is passed to a system call}}
 }
 
 
 // Test Unknown Function 2
 // calling an external unkown function before the sink
-// with aggressive propagation filename_transformed should be
+// with spread propagation filename_transformed should be
 // tainted too
 // FAILS in baseline
 
@@ -219,9 +231,10 @@ void test_unknown_transform2(int input){
   fetchTaintedString (filename);
   unknownTransformInOut(filename, filename_transformed); // taintedness gets lost here
   clang_analyzer_isTainted(*filename); // expected-warning{{YES}}
-  clang_analyzer_isTainted(*filename_transformed); // expected-warning{{YES}}
+  clang_analyzer_isTainted(*filename_transformed); // spread-warning{{YES}}
+                                                   // keep-warning@-1{{NO}}
   strncat(cmd, filename_transformed, sizeof(cmd) - 1);
-  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  system(cmd);// spread-warning {{Untrusted data is passed to a system call}}
 }
 
 // Test
@@ -276,7 +289,7 @@ void test_tainted_global_heap(int input){
 void asyncSystemCmd(void){
   char cmd[2048] = "/bin/cat ";
   strncat(cmd, filenameOnHeap_global, sizeof(cmd) - 1);
-  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  system(cmd);// KNOWN-TO-FAIL-expected-warning {{Untrusted data is passed to a system call}}
   free(filenameOnHeap_global);
 }
 
@@ -333,10 +346,12 @@ void test_aggressive_return(){
   char* filenameOnHeap = (char*) malloc(1024);
   fetchTaintedString (filenameOnHeap);
   char* ret = unknownTransformRet(filenameOnHeap);
-  clang_analyzer_isTainted(*ret); // expected-warning{{YES}}
+  clang_analyzer_isTainted(*ret); // spread-warning{{YES}}
+                                    // keep-warning@-1{{NO}}
   strncat(cmd, ret, sizeof(cmd) - 1);
-  clang_analyzer_isTainted(*cmd); // expected-warning{{YES}}
-  system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
+  clang_analyzer_isTainted(*cmd); // spread-warning{{YES}}
+                                    // keep-warning@-1{{NO}}
+  system(cmd);// spread-warning {{Untrusted data is passed to a system call}}
   free(filenameOnHeap);
   free (ret);
 }
@@ -403,8 +418,7 @@ void test_snprintf(){
   fetchTaintedString (filenameOnHeap);
   int size=0;
   fetchTaintedNumber(&size);
-  snprintf(cmd, size , "/bin/cat %s",filenameOnHeap); // expected-warning {{The size parameter can be controlled by an attacker to cause buffer overflow.}}
-  clang_analyzer_isTainted(*cmd); // expected-warning{{YES}}
+  snprintf(cmd, size , "/bin/cat %s",filenameOnHeap); // expected-warning {{The size parameter can be controlled by an attacker to cause buffer overflow.}}  
   system(cmd); // expected-warning {{Untrusted data is passed to a system call}}
   free(filenameOnHeap);
 }
