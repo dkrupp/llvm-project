@@ -924,9 +924,8 @@ void GenericTaintChecker::checkPreCall(const CallEvent &Call,
     Rule->process(*this, Call, C);
   else if (const auto *Rule = DynamicTaintRules->lookup(Call))
     Rule->process(*this, Call, C);
-  else if (this->TaintPropagationMode==TaintPropagationModeTy::spread || 
-    this->TaintPropagationMode==TaintPropagationModeTy::keep
-  )
+  else if (this->TaintPropagationMode == TaintPropagationModeTy::spread ||
+           this->TaintPropagationMode == TaintPropagationModeTy::keep)
     makeEscapingParamsTainted(Call, C);
   // FIXME: These edge cases are to be eliminated from here eventually.
   //
@@ -1095,20 +1094,32 @@ void GenericTaintChecker::makeEscapingParamsTainted(
     return IsNonConstRef || IsNonConstPtr;
   };
 
-  bool HasTaintedParam = false;  
+  bool HasTaintedParam = false;
+  std::vector<SymbolRef> TaintedSymbols;
+  std::vector<ArgIdxTy> TaintedIndexes;
 
-  ForEachCallArg(
-      [this, &C, &HasTaintedParam, &State](ArgIdxTy I, const Expr *E, SVal) {
-        std::optional<SVal> TaintedSVal =
-            getTaintedPointeeOrPointer(State, C.getSVal(E));        
-        HasTaintedParam |= TaintedSVal.has_value();
-      });
+  ForEachCallArg([this, &C, &HasTaintedParam, &State, &TaintedSymbols,
+                  &TaintedIndexes](ArgIdxTy I, const Expr *E, SVal) {
+    std::optional<SVal> TaintedSVal =
+        getTaintedPointeeOrPointer(State, C.getSVal(E));
+    HasTaintedParam |= TaintedSVal.has_value();
+    // We track back tainted arguments except for stdin
+    if (TaintedSVal && !isStdin(*TaintedSVal, C.getASTContext())) {
+      std::vector<SymbolRef> TaintedArgSyms =
+          getTaintedSymbols(State, *TaintedSVal);
+      if (!TaintedArgSyms.empty()) {
+        llvm::append_range(TaintedSymbols, TaintedArgSyms);
+        TaintedIndexes.push_back(I);
+      }
+    }
+  });
   llvm::errs() << "PreCall<";
         Call.dump(llvm::errs());
         llvm::errs() << "> has taintedParam " << HasTaintedParam << '\n';
   /// Propagate taint where it is necessary.
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
   ImmutableSet<ArgIdxTy> Result = F.getEmptySet();
+  bool spreadPropagated=false;
   ForEachCallArg([&](ArgIdxTy I, const Expr *E, SVal V) {
     // Taint property gets lost if the variable is passed as a
     // non-const pointer or reference to a function which is
@@ -1123,6 +1134,7 @@ void GenericTaintChecker::makeEscapingParamsTainted(
         llvm::errs() << "> AGGRESSIVELY prepares ESCAPING tainting arg index: "
                      << I << '\n';
         Result = F.add(Result, I);
+        spreadPropagated=true;
       }
     }
 
@@ -1139,9 +1151,19 @@ void GenericTaintChecker::makeEscapingParamsTainted(
       }
     }
   });
+
   if (!Result.isEmpty())
     State = State->set<TaintArgsOnPostVisit>(C.getStackFrame(), Result);
-  C.addTransition(State);
+  if (spreadPropagated) {
+    // If spread propagation is on we need to mark the original taint sources
+    // interesting so that the the diagnostic is printed
+    // along the whole taint propagation route.
+    const NoteTag *InjectionTag = taintOriginTrackerTag(
+        C, std::move(TaintedSymbols), std::move(TaintedIndexes),
+        Call.getCalleeStackFrame(0));
+    C.addTransition(State, InjectionTag);
+  } else
+    C.addTransition(State);
 }
 
 void GenericTaintRule::process(const GenericTaintChecker &Checker,
