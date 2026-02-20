@@ -436,3 +436,30 @@ int main(int argc, char * argv[]) {
   system(cmd);// expected-warning {{Untrusted data is passed to a system call}}
   return 0;
 }
+
+
+char* returnSecond(char *a, char* b){
+  clang_analyzer_isTainted(*a); //expected-warning{{YES}}
+  clang_analyzer_isTainted(*b); //expected-warning{{NO}}
+  return b;
+
+}
+
+//Tests that aggressive taint propagation
+//should not taint writeable parameters of 
+//functions which are inlined
+void test_faultyPropagation(){
+  char cmd[2048];
+  char* fileNameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (fileNameOnHeap);
+  int size=0;
+  char *safeString = (char*) malloc(100);
+  strcpy(safeString, "hello");
+  //tests if spread taint propagation would not spread taintedess falsely
+  //to the second arg
+  char* notTaintedString = returnSecond(fileNameOnHeap, safeString);
+  snprintf(cmd, size , "/bin/cat %s",notTaintedString); 
+  system(cmd);//no warning!
+  clang_analyzer_isTainted(*notTaintedString); //expected-warning{{NO}}
+  free(fileNameOnHeap);  
+}
