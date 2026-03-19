@@ -1575,6 +1575,44 @@ which warns only when it can prove that the denominator is 0.
     if (!size)
       return 0;
     return n / size; // no warning
+
+.. _optin-taint-TaintedLoop:
+
+optin.taint.TaintedLoop (C, C++)
+"""""""""""""""""""""""""""""""""
+
+This checker warns for cases when the upper bound of a
+for or while loop is a potentially attacker controlled (tainted) value.
+If an attacker can inject a large value as a loop bound,
+undefined behaviour may be caused
+denial of service attack could be carried out.
+
+The analyzer emits warning only if it cannot prove that the size parameter is
+within reasonable bounds (``<= LOOP_BOUND_TYPE_MAX/4``). This functionality partially
+covers the SEI Cert coding standard rule `INT04-C
+<https://wiki.sei.cmu.edu/confluence/display/c/INT04-C.+Enforce+limits+on+integer+values+originating+from+tainted+sources>`_
+and corresponds to `CWE-606: Unchecked Input for Loop Condition <https://cwe.mitre.org/data/definitions/606.html>`_
+
+You can silence this warning by bounding the ``loop uppper limit`` of the loop.
+
+.. code-block:: c
+
+  void vulnerable(void) {
+    long limit;
+    scanf("%ld", &limit);
+    for (int i=0; i < limit; i++){  // expected-warning {{Loop condition is a tainted, attacker controlled value}}
+      printf("%d ",i);
+    }
+  }
+
+  void vulnerable(void) {
+    long index;
+    scanf("%ld", &index);
+    if (limit>1000)
+      return;
+    for (int i=0; i < limit; i++){  // non-vulnerable. The loop bound is limited.
+      printf("%d ",i);
+    }
   }
 
 .. _security-checkers:
@@ -3788,7 +3826,7 @@ Check that ``[[clang::annotate_type("webkit.nodelete")]]`` annotation does not a
  Foo [[clang::annotate_type("webkit.nodelete")]] trivialFunction(RefCountable* obj) {
    return obj->anotherTrivialFunction();
  };
- 
+
 ``[[clang::annotate_type("webkit.nodelete")]]`` annotation makes the function ignored for the purpose of other WebKit smart pointer checkers.
 For example, ``alpha.webkit.UncountedCallArgsChecker`` will ignore a function call with this annotation.
 
