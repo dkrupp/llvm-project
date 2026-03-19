@@ -1670,6 +1670,10 @@ def TaintedDivChecker: Checker<"TaintedDiv">,
   Dependencies<[TaintPropagationChecker]>,
   Documentation<HasDocumentation>;
 
+def TaintedLoopChecker : Checker<"TaintedLoop">,
+  HelpText<"Check for loops, where the loop condition is a tainted"
+           "(attacker controlled) value">,
+  Documentation<HasDocumentation>;
 } // end "optin.taint"
 
 //===----------------------------------------------------------------------===//

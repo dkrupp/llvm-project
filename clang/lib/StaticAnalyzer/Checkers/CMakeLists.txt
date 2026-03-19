@@ -110,6 +110,7 @@ add_clang_library(clangStaticAnalyzerCheckers
   StreamChecker.cpp
   StringChecker.cpp
   Taint.cpp
+  TaintedLoopChecker.cpp
   TaintTesterChecker.cpp
   TestAfterDivZeroChecker.cpp
   TraversalChecker.cpp
