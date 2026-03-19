@@ -164,8 +164,13 @@ std::optional<SVal> getTaintedPointeeOrPointer(ProgramStateRef State,
   if (const MemRegion *R = Arg.getAsRegion()) {
     llvm::errs() << "Checking taintedness of array " << R << "\n";
     std::vector<SVal> taintedSVals = getTaintedSValsInArray(State, R);
-    if (!taintedSVals.empty())
+    if (!taintedSVals.empty()){
+      llvm::errs() << "Array is tainted because element " << taintedSVals[0] << " is tainted\n";
       return taintedSVals[0];
+    }else{
+      llvm::errs() << "Not tainted\n";
+    }
+
   }
   return std::nullopt;
 }
@@ -927,6 +932,10 @@ void GenericTaintChecker::checkBeginFunction(CheckerContext &C) const {
 void GenericTaintChecker::checkPreCall(const CallEvent &Call,
                                        CheckerContext &C) const {
 
+  llvm::errs() << "PreCall_<";
+  Call.dump(llvm::errs());
+  llvm::errs() << "\n";
+
   initTaintRules(C);
 
   // FIXME: this should be much simpler.
@@ -994,36 +1003,9 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
         continue;
       HasTaintedParam =
           HasTaintedParam || isTaintedOrPointsToTainted(State, C.getSVal(E));
-      llvm::errs() << "param:" << E << " is tainted: " << HasTaintedParam
+      llvm::errs() << "param:" << I << " is tainted: " << isTaintedOrPointsToTainted(State, C.getSVal(E))
                    << "\n";
     }
-    if (HasTaintedParam)
-      llvm::errs() << "\nAGGRESSIVELY TAINTING. Nof args:" << num_args
-                   << " HasTaintedParam:" << HasTaintedParam << "\n";
-    /*
-    if (HasTaintedParam && !TaintArgs && AggressiveTaintPropagation) {
-      llvm::errs() << "Making return value and writable params tainted.\n";
-      llvm::errs() << "Number of params:" << CallNumArgs;
-
-      for (ArgIdxTy I = ReturnValueIndex+1; I < CallNumArgs; ++I) {
-        const Expr *E = GetArgExpr(I, Call);
-        if (!E)
-          continue;
-        SVal ArgSVal = C.getSVal(E);
-        //checking if the argument is a non-const pointer
-        auto LValue = ArgSVal.getAs<Loc>();
-        if (!LValue)
-          continue;
-        const QualType ArgTy =
-    LValue->getType(State->getStateManager().getContext()); if
-    (ArgTy->isPointerType() && !ArgTy.isConstQualified()){ llvm::errs() <<
-    "Param "<< I; llvm::errs() << "is a non const qualified pointer, so tainting
-    it\n"; ArgTy->dump(); llvm::errs()<<"\n"; ApproxTaintedArgs =
-    F.add(ApproxTaintedArgs, I);
-        }
-      }
-      TaintArgs = &ApproxTaintedArgs;
-    }*/
   }
 
   if (!TaintArgs)
@@ -1041,7 +1023,7 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   std::vector<SymbolRef> TaintedSymbols;
   std::vector<ArgIdxTy> TaintedIndexes;
   for (ArgIdxTy ArgNum : *TaintArgs) {
-    llvm::errs() << "Post call taintedness arg:" << ArgNum << " \n";
+    llvm::errs() << "Post call. Adding taintedness to arg " << ArgNum << " \n";
     // Special handling for the tainted return value.
     if (ArgNum == ReturnValueIndex) {
       State = addTaint(State, Call.getReturnValue());
@@ -1122,7 +1104,7 @@ void GenericTaintChecker::makeEscapingParamsTainted(const CallEvent &Call,
       }
     }
   });
-  llvm::errs() << "PreCall<";
+  llvm::errs() << "makeEscapingParamsTainted<";
   Call.dump(llvm::errs());
   llvm::errs() << "> has taintedParam " << HasTaintedParam << '\n';
   /// Propagate taint where it is necessary.
@@ -1196,6 +1178,7 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
     if (isStdin(C.getSVal(E), C.getASTContext())) {
       State = addTaint(State, C.getSVal(E));
     }
+    llvm::errs()<<"Generating sink if parameter " << I << " is tainted\n";
     if (SinkArgs.contains(I) && isTaintedOrPointsToTainted(State, C.getSVal(E)))
       Checker.generateReportIfTainted(E, SinkMsg.value_or(MsgCustomSink), C);
   });
@@ -1411,6 +1394,7 @@ void ento::registerTaintPropagationChecker(CheckerManager &Mgr) {
   StringRef TaintPropagationMode =
       Mgr.getAnalyzerOptions().getCheckerStringOption(checker,
                                                       "TaintPropagationMode");
+  llvm::errs() << "TaintPropagationMode: " << TaintPropagationMode << '\n';
   if (TaintPropagationMode == "forget")
     checker->TaintPropagationMode = TaintPropagationModeTy::forget;
   else if (TaintPropagationMode == "keep")
