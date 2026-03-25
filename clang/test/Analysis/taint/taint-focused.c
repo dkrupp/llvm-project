@@ -1,4 +1,4 @@
-// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
+// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core \
 // RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
 // RUN: -analyzer-config optin.taint.TaintPropagation:TaintPropagationMode=forget \
 // RUN: -analyzer-config analyzer-focused-taint=false \
@@ -8,7 +8,7 @@
 // RUN: -Wno-format-security -verify=expected,forget %s
 
 
-// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
+// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core \
 // RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
 // RUN: -analyzer-config optin.taint.TaintPropagation:TaintPropagationMode=keep \
 // RUN: -analyzer-config analyzer-focused-taint=false \
@@ -18,7 +18,7 @@
 // RUN: -Wno-format-security -verify=expected,keep %s
 
 
-// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core,alpha.security.ArrayBoundV2 \
+// RUN: %clang_analyze_cc1 -analyzer-checker=optin.taint,core \
 // RUN: -analyzer-config optin.taint.TaintPropagation:Config=%S/taint-config.yaml \
 // RUN: -analyzer-config optin.taint.TaintPropagation:TaintPropagationMode=spread \
 // RUN: -analyzer-config analyzer-focused-taint=false \

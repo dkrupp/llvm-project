@@ -1646,14 +1646,7 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
                   "This way, advanced users can fully customize "
                   "their taint configuration model.",
                   "true",
-                  Released>
-  ]>,
-  Documentation<NotDocumented>,
-  Hidden;
-
-def GenericTaintChecker : Checker<"GenericTaint">,
-  HelpText<"Reports potential injection vulnerabilities">,
-  CheckerOptions<[
+                  Released>,
     CmdLineOption<String,
                   "TaintPropagationMode",
                   "If set to forget, the writeable parameters and the return value of non-inlineable functions"
@@ -1663,7 +1656,6 @@ def GenericTaintChecker : Checker<"GenericTaint">,
                   "and the taintedness is spread to the return value and all writeable parameters.",
                   "forget",
                   Released>
-
   ]>,
   Documentation<NotDocumented>,
   Hidden;
