@@ -15,6 +15,7 @@
 #include "clang/AST/OperationKinds.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/StaticAnalyzer/Checkers/BuiltinCheckerRegistration.h"
+#include "clang/StaticAnalyzer/Checkers/Taint.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugReporterVisitors.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
 #include "clang/StaticAnalyzer/Core/Checker.h"
@@ -48,6 +49,42 @@ struct SizeArgExpr : AnyArgExpr {};
 
 using ErrorMessage = SmallString<128>;
 enum class AccessKind { write, read };
+
+
+SVal getPointeeOf(ProgramStateRef State, Loc LValue) {
+  const QualType ArgTy = LValue.getType(State->getStateManager().getContext());
+  if (!ArgTy->isPointerType() || !ArgTy->getPointeeType()->isVoidType())
+    return State->getSVal(LValue);
+
+  // Do not dereference void pointers. Treat them as byte pointers instead.
+  // FIXME: we might want to consider more than just the first byte.
+  return State->getSVal(LValue, State->getStateManager().getContext().CharTy);
+}
+
+/// Given a pointer/reference argument, return the value it refers to.
+std::optional<SVal> getPointeeOf(ProgramStateRef State, SVal Arg) {
+  if (auto LValue = Arg.getAs<Loc>())
+    return getPointeeOf(State, *LValue);
+  return std::nullopt;
+}
+
+/// Given a pointer, return the SVal of its pointee or if it is tainted,
+/// otherwise return the pointer's SVal if tainted.
+/// Also considers stdin as a taint source.
+std::optional<SVal> getTaintedPointeeOrPointer(ProgramStateRef State,
+                                               SVal Arg) {
+  if (auto Pointee = getPointeeOf(State, Arg))
+    if (clang::ento::taint::isTainted(State, *Pointee)) // FIXME: isTainted(...) ? Pointee : None;
+      return Pointee;
+
+  if (clang::ento::taint::isTainted(State, Arg))
+    return Arg;
+  return std::nullopt;
+}
+
+bool isTaintedOrPointsToTainted(ProgramStateRef State, SVal ExprSVal) {
+  return getTaintedPointeeOrPointer(State, ExprSVal).has_value();
+}
 
 static ErrorMessage createOutOfBoundErrorMsg(StringRef FunctionDescription,
                                              AccessKind Access) {
@@ -320,6 +357,9 @@ public:
                                SizeArgExpr Size, AnyArgExpr First,
                                AnyArgExpr Second,
                                CharKind CK = CharKind::Regular) const;
+  bool IsDynamicExtentSizeTainted(CheckerContext &C,
+                                              ProgramStateRef state,
+                                              SVal Element) const;
   void emitOverlapBug(CheckerContext &C,
                       ProgramStateRef state,
                       const Stmt *First,
@@ -329,6 +369,9 @@ public:
                       StringRef WarningMsg) const;
   void emitOutOfBoundsBug(CheckerContext &C, ProgramStateRef State,
                           const Stmt *S, StringRef WarningMsg) const;
+  void emitTaintedBuffer(CheckerContext &C,
+                                        ProgramStateRef State, const Stmt *S,
+                                        StringRef WarningMsg) const;
   void emitNotCStringBug(CheckerContext &C, ProgramStateRef State,
                          const Stmt *S, StringRef WarningMsg) const;
   void emitUninitializedReadBug(CheckerContext &C, ProgramStateRef State,
@@ -590,6 +633,25 @@ ProgramStateRef CStringChecker::CheckLocation(CheckerContext &C,
   return StInBound;
 }
 
+bool CStringChecker::IsDynamicExtentSizeTainted(CheckerContext &C,
+                                                ProgramStateRef state,
+                                                SVal Element) const {
+  // Check for out of bound array element access.
+  const MemRegion *R = Element.getAsRegion();
+  if (!R)
+    return false;
+
+  const auto *ER = dyn_cast<ElementRegion>(R);
+  if (!ER)
+    return false;
+
+  // Get the size of the array.
+  const auto *superReg = cast<SubRegion>(ER->getSuperRegion());
+  DefinedOrUnknownSVal Size =
+      getDynamicExtent(state, superReg, C.getSValBuilder());
+  return clang::ento::taint::isTainted(state, Size);
+}
+
 ProgramStateRef
 CStringChecker::CheckBufferAccess(CheckerContext &C, ProgramStateRef State,
                                   AnyArgExpr Buffer, SizeArgExpr Size,
@@ -822,6 +884,20 @@ void CStringChecker::emitUninitializedReadBug(CheckerContext &C,
 }
 
 void CStringChecker::emitOutOfBoundsBug(CheckerContext &C,
+                                        ProgramStateRef State, const Stmt *S,
+                                        StringRef WarningMsg) const {
+  if (ExplodedNode *N = C.generateErrorNode(State)) {
+    // FIXME: It would be nice to eventually make this diagnostic more clear,
+    // e.g., by referencing the original declaration or by saying *why* this
+    // reference is outside the range.
+    auto Report =
+        std::make_unique<PathSensitiveBugReport>(OutOfBounds, WarningMsg, N);
+    Report->addRange(S->getSourceRange());
+    C.emitReport(std::move(Report));
+  }
+}
+
+void CStringChecker::emitTaintedBuffer(CheckerContext &C,
                                         ProgramStateRef State, const Stmt *S,
                                         StringRef WarningMsg) const {
   if (ExplodedNode *N = C.generateErrorNode(State)) {
@@ -1839,6 +1915,8 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallEvent &Call,
                                       bool ReturnEnd, bool IsBounded,
                                       ConcatFnKind appendK,
                                       bool returnPtr) const {
+  llvm::errs()<<"evalStrcpyCommon\n";
+  Call.dump();
   if (appendK == ConcatFnKind::none)
     CurrentFunctionDescription = "string copy function";
   else
@@ -2259,6 +2337,42 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallEvent &Call,
         finalStrLength = UnknownVal();
     }
     state = setCStringLength(state, dstRegVal->getRegion(), finalStrLength);
+
+    // Report a potential buffer overlfow
+    // if exclusively the extent size of the destination buffer
+    // or the extent size of the source buffer is tainted
+    // or in case of the bounded access the size is tainted
+    llvm::errs()<<"CouldAccessOutBound:"<<CouldAccessOutOfBound<<"\n";
+    if (CouldAccessOutOfBound) {
+      // extent size of the destination buffer is tainted
+      bool isDstTainted = IsDynamicExtentSizeTainted(C, state, DstVal);
+      llvm::errs()<<"dst:\n";
+      DstVal.dump();
+      llvm::errs()<<"\n";
+      state->dump();
+      llvm::errs()<<"\n";
+      if (IsBounded) {
+        llvm::errs()<<"IsBounded:"<<IsBounded<<"\n";
+        const Expr *LenExpr = Call.getArgExpr(2);
+        SVal LenVal = state->getSVal(LenExpr, LCtx);
+        bool isSizeTainted = clang::ento::taint::isTainted(state,LenVal);
+        llvm::errs()<<"isDstTainted:"<<isDstTainted<<"\n";
+        llvm::errs()<<"isSizeTainted:"<<isSizeTainted<<"\n";
+        if (isDstTainted != isSizeTainted)
+          emitTaintedBuffer(C, state, Dst.Expression,
+                            "The destination buffer size or the write "
+                            "length is tainted. Potential buffer overflow");
+      } else {
+        //bool isSrcTainted = IsDynamicExtentSizeTainted(C, state, srcVal);
+        bool isSrcTainted = isTaintedOrPointsToTainted(state, srcVal);
+        llvm::errs()<<"isDstTainted:"<<isDstTainted<<"\n";
+        llvm::errs()<<"isSrcTainted:"<<isSrcTainted<<"\n";
+        if (isDstTainted != isSrcTainted)
+          emitTaintedBuffer(C, state, Dst.Expression,
+                            "The destination buffer size or the source "
+                            "buffer size is tainted. Potential buffer overflow");
+      }
+    }
   }
 
   assert(state);
@@ -2273,6 +2387,18 @@ void CStringChecker::evalStrcpyCommon(CheckerContext &C, const CallEvent &Call,
   // Set the return value.
   state = state->BindExpr(Call.getOriginExpr(), LCtx, Result);
   C.addTransition(state);
+}
+
+
+
+SVal getPointeeOf(ProgramStateRef State, Loc LValue) {
+  const QualType ArgTy = LValue.getType(State->getStateManager().getContext());
+  if (!ArgTy->isPointerType() || !ArgTy->getPointeeType()->isVoidType())
+    return State->getSVal(LValue);
+
+  // Do not dereference void pointers. Treat them as byte pointers instead.
+  // FIXME: we might want to consider more than just the first byte.
+  return State->getSVal(LValue, State->getStateManager().getContext().CharTy);
 }
 
 void CStringChecker::evalStrxfrm(CheckerContext &C,
@@ -2808,6 +2934,9 @@ CStringChecker::FnCheck CStringChecker::identifyCall(const CallEvent &Call,
 }
 
 bool CStringChecker::evalCall(const CallEvent &Call, CheckerContext &C) const {
+  llvm::errs()<<"Eval Call\n";
+  Call.dump();
+  llvm::errs()<<"\n";
   FnCheck Callback = identifyCall(Call, C);
 
   // If the callee isn't a string function, let another checker handle it.
