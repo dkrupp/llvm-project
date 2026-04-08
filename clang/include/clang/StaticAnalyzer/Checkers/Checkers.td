@@ -1647,6 +1647,15 @@ def TaintPropagationChecker : Checker<"TaintPropagation">, // Modelling checker
                   "This way, advanced users can fully customize "
                   "their taint configuration model.",
                   "true",
+                  Released>,
+    CmdLineOption<String,
+                  "TaintPropagationMode",
+                  "If set to forget, the writeable parameters and the return value of non-inlineable functions"
+                  " lose the taintedness property."
+                  "If set to keep,  the writeable parameters of non-inlineable functions keep taintedness."
+                  "If set to spread, the writeable parameters of non-inlineable functions keep taintedness "
+                  "and the taintedness is spread to the return value and all writeable parameters.",
+                  "forget",
                   Released>
   ]>,
   Documentation<NotDocumented>,
