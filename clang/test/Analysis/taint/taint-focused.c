@@ -489,3 +489,16 @@ void test_faultyPropagation(){
   clang_analyzer_isTainted(*notTaintedString); //expected-warning{{NO}}
   free(fileNameOnHeap);
 }
+
+//Tests strlen should not
+//spread taintedness even in spread mode
+void test_strlenPropagation(){
+  char cmd[2048];
+  char* fileNameOnHeap = (char*) malloc(1024);
+  fetchTaintedString (fileNameOnHeap);
+  int size=strlen(fileNameOnHeap);
+  clang_analyzer_isTainted(size);//expected-warning{{NO}}
+  char *safeString = (char*) malloc(size+1);//no warning
+  free(safeString);
+  free(fileNameOnHeap);
+}

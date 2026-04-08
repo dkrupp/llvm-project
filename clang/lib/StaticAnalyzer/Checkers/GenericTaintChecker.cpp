@@ -772,6 +772,9 @@ void GenericTaintChecker::initTaintRules(CheckerContext &C) const {
       // strlen, wcslen, strnlen and alike intentionally don't propagate taint.
       // See the details here: https://github.com/llvm/llvm-project/pull/66086
 
+      //streln keeps taintedness, but does not spread it
+      {{CDM::CLibrary, {"strlen"}}, TR::Prop({{0}}, {{0}})},
+
       {{CDM::CLibrary, {"strtol"}}, TR::Prop({{0}}, {{1, ReturnValueIndex}})},
       {{CDM::CLibrary, {"strtoll"}}, TR::Prop({{0}}, {{1, ReturnValueIndex}})},
       {{CDM::CLibrary, {"strtoul"}}, TR::Prop({{0}}, {{1, ReturnValueIndex}})},
