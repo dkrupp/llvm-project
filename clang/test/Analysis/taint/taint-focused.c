@@ -433,7 +433,7 @@ void test_sprintf(){
   fetchTaintedString (filenameOnHeap);
   sprintf(cmd, "/bin/cat %s",filenameOnHeap); // taint should be propagated to cmd
   clang_analyzer_isTainted(*cmd); // expected-warning{{YES}}
-  system(cmd); // expected-warning {{Untrusted data is passed to a system call}}
+  system(cmd); // expected-warning {{antrusted data is passed to a system call}}
   free(filenameOnHeap);
 }
 

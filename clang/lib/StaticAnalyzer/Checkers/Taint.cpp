@@ -202,7 +202,7 @@ std::vector<SVal> taint::getTaintedSValsInArray(ProgramStateRef State,
   std::vector<SVal> TaintedSVals;
   const MemRegion *SurroundingArray = MR;
   while (const auto *ER = SurroundingArray->getAs<ElementRegion>()){
-    llvm::errs()<<"ER: "<<ER<<"\n";
+    //llvm::errs()<<"ER: "<<ER<<"\n";
     SurroundingArray = ER->getSuperRegion();
   }
   const MemRegion* const * TaintedElement = State->get<TaintedElementInArrayHint>(SurroundingArray);

@@ -162,13 +162,13 @@ std::optional<SVal> getTaintedPointeeOrPointer(ProgramStateRef State,
   // The pointed value is tainted if it points to an array
   // and if any element of that array is tainted
   if (const MemRegion *R = Arg.getAsRegion()) {
-    llvm::errs() << "Checking taintedness of array " << R << "\n";
+    //llvm::errs() << "Checking taintedness of array " << R << "\n";
     std::vector<SVal> taintedSVals = getTaintedSValsInArray(State, R);
     if (!taintedSVals.empty()){
       llvm::errs() << "Array is tainted because element " << taintedSVals[0] << " is tainted\n";
       return taintedSVals[0];
     }else{
-      llvm::errs() << "Not tainted\n";
+      //llvm::errs() << "Not tainted\n";
     }
 
   }
@@ -935,9 +935,9 @@ void GenericTaintChecker::checkBeginFunction(CheckerContext &C) const {
 void GenericTaintChecker::checkPreCall(const CallEvent &Call,
                                        CheckerContext &C) const {
 
-  llvm::errs() << "PreCall_<";
-  Call.dump(llvm::errs());
-  llvm::errs() << "\n";
+  //llvm::errs() << "PreCall_<";
+  //Call.dump(llvm::errs());
+  //llvm::errs() << "\n";
 
   initTaintRules(C);
 
@@ -992,9 +992,9 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
     return;
   }
   if (!C.wasInlined && !TaintArgs) {
-    llvm::errs() << "PostCall<";
-    Call.dump(llvm::errs());
-    llvm::errs() << " Was not inlined.\n";
+    //llvm::errs() << "PostCall<";
+    //Call.dump(llvm::errs());
+    //llvm::errs() << " Was not inlined.\n";
     /// Check for taint sinks.
     ProgramStateRef State = C.getState();
     bool HasTaintedParam = false;
@@ -1006,8 +1006,8 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
         continue;
       HasTaintedParam =
           HasTaintedParam || isTaintedOrPointsToTainted(State, C.getSVal(E));
-      llvm::errs() << "param:" << I << " is tainted: " << isTaintedOrPointsToTainted(State, C.getSVal(E))
-                   << "\n";
+      //llvm::errs() << "param:" << I << " is tainted: " << isTaintedOrPointsToTainted(State, C.getSVal(E))
+      //             << "\n";
     }
   }
 
@@ -1026,7 +1026,7 @@ void GenericTaintChecker::checkPostCall(const CallEvent &Call,
   std::vector<SymbolRef> TaintedSymbols;
   std::vector<ArgIdxTy> TaintedIndexes;
   for (ArgIdxTy ArgNum : *TaintArgs) {
-    llvm::errs() << "Post call. Adding taintedness to arg " << ArgNum << " \n";
+    //llvm::errs() << "Post call. Adding taintedness to arg " << ArgNum << " \n";
     // Special handling for the tainted return value.
     if (ArgNum == ReturnValueIndex) {
       State = addTaint(State, Call.getReturnValue());
@@ -1107,9 +1107,9 @@ void GenericTaintChecker::makeEscapingParamsTainted(const CallEvent &Call,
       }
     }
   });
-  llvm::errs() << "makeEscapingParamsTainted<";
-  Call.dump(llvm::errs());
-  llvm::errs() << "> has taintedParam " << HasTaintedParam << '\n';
+  //llvm::errs() << "makeEscapingParamsTainted<";
+  //Call.dump(llvm::errs());
+  //llvm::errs() << "> has taintedParam " << HasTaintedParam << '\n';
   /// Propagate taint where it is necessary.
   auto &F = State->getStateManager().get_context<ArgIdxFactory>();
   ImmutableSet<ArgIdxTy> Result = F.getEmptySet();
@@ -1139,10 +1139,10 @@ void GenericTaintChecker::makeEscapingParamsTainted(const CallEvent &Call,
         this->TaintPropagationMode == TaintPropagationModeTy::keep &&
         getTaintedPointeeOrPointer(State, C.getSVal(E)).has_value()) {
       if (!Result.contains(I)) {
-        llvm::errs() << "PreCall<";
-        Call.dump(llvm::errs());
-        llvm::errs() << "> KEEPING taintedness so ESCAPING tainting arg index: "
-                     << I << '\n';
+        //llvm::errs() << "PreCall<";
+        //Call.dump(llvm::errs());
+        //llvm::errs() << "> KEEPING taintedness so ESCAPING tainting arg index: "
+        //             << I << '\n';
         Result = F.add(Result, I);
       }
     }
@@ -1181,7 +1181,7 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
     if (isStdin(C.getSVal(E), C.getASTContext())) {
       State = addTaint(State, C.getSVal(E));
     }
-    llvm::errs()<<"Generating sink if parameter " << I << " is tainted\n";
+    //llvm::errs()<<"Generating sink if parameter " << I << " is tainted\n";
     if (SinkArgs.contains(I) && isTaintedOrPointsToTainted(State, C.getSVal(E)))
       Checker.generateReportIfTainted(E, SinkMsg.value_or(MsgCustomSink), C);
   });
@@ -1245,9 +1245,9 @@ void GenericTaintRule::process(const GenericTaintChecker &Checker,
                  llvm::dbgs()
                  << "> prepares tainting arg index: " << I << '\n';);
 
-      llvm::errs() << "PreCall<";
-      Call.dump(llvm::errs());
-      llvm::errs() << "> prepares tainting arg index: " << I << '\n';
+      //llvm::errs() << "PreCall<";
+      //Call.dump(llvm::errs());
+      //llvm::errs() << "> prepares tainting arg index: " << I << '\n';
       Result = F.add(Result, I);
     }
 

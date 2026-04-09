@@ -103,8 +103,8 @@ void TaintedLoopChecker::checkBranchCondition(const Stmt *Condition,
     Condition->dump();
     return;
   }
-  llvm::errs() << "TaintedLoopChecker: Loop bound:\n";
-  LoopBound->dump();
+  //llvm::errs() << "TaintedLoopChecker: Loop bound:\n";
+  //LoopBound->dump();
 
   const ProgramStateRef St = Ctx.getState();
   const Expr *LoopBoundExpr = cast<Expr>(LoopBound);
